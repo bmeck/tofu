@@ -196,6 +196,10 @@ const walkPattern = (path, scopeStack, kind, init) => {
   } else if (path.type === 'RestElement') {
     const name = path.get('argument', 'name').node;
     scopeStack.declare(new Declare(kind, name, path));
+  } else if (path.type === 'ImportSpecifier' ||
+    path.type === 'ImportDefaultSpecifier' || 
+    path.type === 'ImportNamespaceSpecifier') {
+    walkPattern(path.get('local'), scopeStack, kind, init);
   }
 }
 const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
