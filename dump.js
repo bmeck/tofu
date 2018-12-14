@@ -2,15 +2,6 @@
 const {parse} = require('@babel/parser');
 const {NodePath} = require('./node_path');
 
-const file = __filename;
-const fs = require('fs');
-const body = 'for (var x = 1; x in {x}; x) {this}';//fs.readFileSync(file, 'utf8');
-
-const SCOPES = new WeakMap();
-const root = NodePath.from(parse(body));
-
-const parseGoal = root.get('program', 'sourceType').node;
-
 class BindingOperation {
   constructor(name, path) {
     this.name = name;
@@ -115,6 +106,7 @@ const BlockCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const CatchCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const FunctionCatch = (kind) => true;
 const WithCatch = (kind) => true;
+// walks in order to mark bindings as being Get
 const walkExpression = (path, scopeStack) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
@@ -149,7 +141,12 @@ const walkExpression = (path, scopeStack) => {
     walkExpression(path.get('properties'), scopeStack);
   } else if (path.type === 'SpreadElement') {
     walkExpression(path.get('argument'), scopeStack);
-  } else if (path.type === 'ObjectMethod') {
+  } else if (path.type === 'ObjectProperty') {
+    if (path.get('computed').node) {
+      walkExpression(path.get('key'), scopeStack);
+    }
+    walkExpression(path.get('value'), scopeStack);
+  }  else if (path.type === 'ObjectMethod') {
     if (path.get('computed').node) {
       walkExpression(path.get('key'), scopeStack);
     }
@@ -166,6 +163,7 @@ const walkExpression = (path, scopeStack) => {
     walkExpression(path.get('expressions'), scopeStack);
   }
 };
+// walks in order to mark bindings as being Declare
 const walkPattern = (path, scopeStack, kind, init) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
@@ -185,10 +183,9 @@ const walkPattern = (path, scopeStack, kind, init) => {
     }
   } else if (path.type === 'ObjectProperty') {
     if (path.get('computed').node) {
-      walkExpression(path.get('value'), scopeStack);
-    } else {
-      walkPattern(path.get('value'), scopeStack, kind, init);
+      walkExpression(path.get('key'), scopeStack);
     }
+    walkPattern(path.get('value'), scopeStack, kind, init);
   } else if (path.type === 'ArrayPattern') {
     for (const prop of path.get('elements')) {
       walkPattern(prop, scopeStack, kind, init);
@@ -314,4 +311,25 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
 };
 const scopes = walk(root);
 scopes.resolveOperations();
-console.dir(scopes.scopes[0], {depth: 5});
+const freeVars = scopes.scopes[0].variables;
+const body = 'require("fs"); var free';//fs.readFileSync(file, 'utf8');
+const root = NodePath.from(parse(body, {
+  // options: https://babeljs.io/docs/en/babel-parser
+  sourceType: 'script'
+}));
+console.dir(freeVars.get('require').operations.reduce((acc, x) => {
+  if (x instanceof Get &&
+    x.path.parent.type === 'CallExpression' &&
+    x.path.key === 'callee') {
+    // call to require
+    acc.push(x.path.parent.get('arguments').node);
+  } else if (x.path.parent.type === 'MemberExpression' && x.path.key === 'object') {
+    // member expression for require.resolve etc
+  } else {
+    // someone is doing something weird
+    // warn?
+  }
+  return acc;
+}, []), {depth: 5});
+console.dir(freeVars.get('free'), {depth: 4})
+// todo, iterative crawl to find non-strict `this` usage inside functions
