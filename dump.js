@@ -4,7 +4,7 @@ const {NodePath} = require('./node_path');
 
 const file = __filename;
 const fs = require('fs');
-const body = 'for (var x = 1; x in {x}; x) {}';//fs.readFileSync(file, 'utf8');
+const body = 'for (var x = 1; x in {x}; x) {this}';//fs.readFileSync(file, 'utf8');
 
 const SCOPES = new WeakMap();
 const root = NodePath.from(parse(body));
