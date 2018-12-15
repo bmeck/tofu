@@ -345,7 +345,7 @@ process.stdin.on('data', (data) => body.push(data));
 process.stdin.on('end', () => {
   check(Buffer.concat(body).toString('utf8'));
 });
-function check(body) {
+const check = (body) => {
   const root = NodePath.from(parse(body, {
     // options: https://babeljs.io/docs/en/babel-parser
     sourceType: 'script'
@@ -375,7 +375,7 @@ function check(body) {
     return {value};
   };
   let requires = [];
-  let free_variables = {};
+  let freeVariables = {};
   if (freeVars.has('require')) {
     requires = freeVars.get('require').operations.reduce((acc, x) => {
       if (x instanceof Get &&
@@ -402,7 +402,7 @@ function check(body) {
     }, []);
   }
   for (const [k,v] of freeVars.entries()) {
-    const store = freeVars[k] = {
+    const store = freeVariables[k] = {
       gets: [],
       sets: [],
       declares: [],
@@ -420,4 +420,8 @@ function check(body) {
       }
     }
   }
+  console.log(JSON.stringify({
+    requires,
+    freeVariables
+  }, null, 2));
 }
