@@ -340,26 +340,63 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
   }
   return scopeStack;
 };
-const body = 'function y(){this}';//fs.readFileSync(file, 'utf8');
-const root = NodePath.from(parse(body, {
-  // options: https://babeljs.io/docs/en/babel-parser
-  sourceType: 'script'
-}));
-const scopes = walk(root);
-scopes.resolveOperations();
-const freeVars = scopes.scopes[0].variables;
-console.dir(freeVars.get('require').operations.reduce((acc, x) => {
-  if (x instanceof Get &&
-    x.path.parent.type === 'CallExpression' &&
-    x.path.key === 'callee') {
-    // call to require
-    acc.push(x.path.parent.get('arguments').node);
-  } else if (x.path.parent.type === 'MemberExpression' && x.path.key === 'object') {
-    // member expression for require.resolve etc
-  } else {
-    // someone is doing something weird
-    // warn?
+let body = [];
+process.stdin.on('data', (data) => body.push(data));
+process.stdin.on('end', () => {
+  check(Buffer.concat(body).toString('utf8'));
+});
+function check(body) {
+  const root = NodePath.from(parse(body, {
+    // options: https://babeljs.io/docs/en/babel-parser
+    sourceType: 'script'
+  }));
+  const scopes = walk(root);
+  scopes.resolveOperations();
+  const freeVars = scopes.scopes[0].variables;
+  const rawConstExprOf = (path) => {
+    let value;
+    if (path.type === 'StringLiteral') {
+      value = path.node.extra.raw;
+    } else if (path.type === 'TemplateLiteral') {
+      if (path.get('expressions').node.length !== 0) {
+        return null;
+      }
+      // assert quasis.length === 1 && quasis[len-1].tail === true
+      value = path.get('quasis')[0].value.raw;
+    } else if (path.type === 'BooleanLiteral') {
+      value = `${path.node.value}`;
+    } else if (path.type === 'NumericLiteral') {
+      value = path.node.extra.raw;
+    } else if (path.type === 'NullLiteral') {
+      value = "null";
+    } else {
+      return null;
+    }
+    return {value};
+  };
+  if (freeVars.has('require')) {
+    console.dir(freeVars.get('require').operations.reduce((acc, x) => {
+      if (x instanceof Get &&
+        x.path.parent.type === 'CallExpression' &&
+        x.path.key === 'callee') {
+        // call to require
+        const args = x.path.parent.get('arguments');
+        if (args.node.length !== 1) {
+          // warn, strange call
+        }
+        const specifier = rawConstExprOf(args.get(0));
+        if (specifier) {
+          acc.push({type: 'static', specifier, loc: x.path.node.loc});
+        } else {
+          acc.push({type: 'dynamic', loc: x.path.node.loc});
+        }
+      } else if (x.path.parent.type === 'MemberExpression' && x.path.key === 'object') {
+        // member expression for require.resolve etc
+      } else {
+        // someone is doing something weird
+        // warn?
+      }
+      return acc;
+    }, []), {depth: 5});
   }
-  return acc;
-}, []), {depth: 5});
-console.dir(freeVars.get('this'), {depth: 4});
+}
