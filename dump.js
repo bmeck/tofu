@@ -24,7 +24,7 @@ class Binding {
   }
 }
 class Scope {
-  constructor(parent = null, declareCatches) {
+  constructor(parent = null, declareCatches, modes = []) {
     this.parent = parent;
     this.children = [];
     if (parent) {
@@ -32,6 +32,15 @@ class Scope {
     }
     this.declareCatches = declareCatches;
     this.variables = new Map();
+    this.modes = modes;
+  }
+  hasMode(mode) {
+    if (this.modes.includes(mode)) {
+      return true;
+    } else if (this.parent) {
+      return this.parent.hasMode(mode);
+    }
+    return false;
   }
   encounter(operation) {
     const {variables} = this;
@@ -71,9 +80,12 @@ class ScopeStack {
       this.scopes[this.scopes.length - 1] :
       null;
   }
-  push(catcher) {
+  hasMode(mode) {
+    return this.current.hasMode(mode);
+  }
+  push(catcher, modes) {
     this.scopes.push(
-      new Scope(this.current, catcher)
+      new Scope(this.current, catcher, modes)
     );
   }
   pop() {
@@ -82,9 +94,9 @@ class ScopeStack {
   declare(decl) {
     this.current.encounter(decl);
   }
-  markOperation(operation) {
+  markOperation(operation, scope = this.current) {
     this.pendingEncounters.push({
-      scope: this.current,
+      scope,
       operation
     });
   }
@@ -117,7 +129,17 @@ const walkExpression = (path, scopeStack) => {
     scopeStack.markOperation(new Get(name, path));
   } else if (path.type === 'Super') {
     scopeStack.markOperation(new Get('super', path));
-  }  else if (path.type === 'ThisExpression') {
+  } else if (path.type === 'ThisExpression') {
+    if (!scopeStack.current.hasMode('strict')) {
+      // sloppy this accesses globals
+      if (scopeStack.current.parent) {
+        let needle = scopeStack.current;
+        while (needle.parent) {
+          needle = needle.parent;
+        }
+        scopeStack.markOperation(new Get('this', path), needle);
+      }
+    }
     scopeStack.markOperation(new Get('this', path));
   } else if (path.type === 'CallExpression' || path.type === 'NewExpression') {
     walkExpression(path.get('callee'), scopeStack);
@@ -199,15 +221,23 @@ const walkPattern = (path, scopeStack, kind, init) => {
     walkPattern(path.get('local'), scopeStack, kind, init);
   }
 }
+const hasUseStrict = (directiveHoldingPath) => {
+  const directives = directiveHoldingPath.get('directives');
+  return Array.isArray(directives.node) && [
+    ...directives
+  ].find((d) => d.get('value', 'value').node === 'use strict');
+};
 const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
   for (const child of path.entries()) {
     let finalizers = [];
     if (child.type === 'Program') {
       finalizers.push(() => scopeStack.pop());
+      const sourceType = child.get('sourceType').node;
       scopeStack.push(
-        child.get('sourceType').node === 'script' ?
+        sourceType === 'script' ?
           ScriptCatch :
-          ModuleCatch
+          ModuleCatch,
+        sourceType === 'module' || hasUseStrict(child) ? ['strict'] : []
       );
     } else if (child.type === 'BlockStatement') {
       if ([
@@ -222,13 +252,14 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
     } else if (child.type === 'CatchClause') {
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(CatchCatch);
+      walkPattern(child.get('param'), scopeStack, BINDING_KINDS.BLOCK, null);
     } else if (child.type === 'FunctionExpression' || child.type === 'FunctionDeclaration') {
       const id = child.get('id', 'name').node;
       if (child.type === 'FunctionDeclaration') {
         scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, id, child));
       }
       finalizers.push(() => scopeStack.pop());
-      scopeStack.push(FunctionCatch);
+      scopeStack.push(FunctionCatch, hasUseStrict(child) ? ['strict'] : []);
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'this', child));
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'arguments', child));
       if (id) {
@@ -237,11 +268,11 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
       walkPattern(child.get('params'), scopeStack, BINDING_KINDS.HOISTED, null);
     } else if (child.type === 'ArrowFunctionExpression') {
       finalizers.push(() => scopeStack.pop());
-      scopeStack.push(FunctionCatch);
+      scopeStack.push(FunctionCatch, hasUseStrict(child) ? ['strict'] : []);
       walkPattern(child.get('params'), scopeStack, BINDING_KINDS.HOISTED, null);
     } else if (child.type === 'ObjectMethod' || child.type === 'ClassMethod') {
       finalizers.push(() => scopeStack.pop());
-      scopeStack.push(FunctionCatch);
+      scopeStack.push(FunctionCatch, hasUseStrict(child) ? ['strict'] : []);
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'this', child));
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'arguments', child));
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'super', child));
@@ -253,7 +284,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
       }
       walkExpression(child.get('superClass'), scopeStack);
       finalizers.push(() => scopeStack.pop());
-      scopeStack.push(FunctionCatch);
+      scopeStack.push(FunctionCatch, ['strict']);
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'this', child));
       scopeStack.declare(new Declare(BINDING_KINDS.HOISTED, 'super', child));
       if (id) {
@@ -309,14 +340,14 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
   }
   return scopeStack;
 };
-const scopes = walk(root);
-scopes.resolveOperations();
-const freeVars = scopes.scopes[0].variables;
-const body = 'require("fs"); var free';//fs.readFileSync(file, 'utf8');
+const body = 'function y(){this}';//fs.readFileSync(file, 'utf8');
 const root = NodePath.from(parse(body, {
   // options: https://babeljs.io/docs/en/babel-parser
   sourceType: 'script'
 }));
+const scopes = walk(root);
+scopes.resolveOperations();
+const freeVars = scopes.scopes[0].variables;
 console.dir(freeVars.get('require').operations.reduce((acc, x) => {
   if (x instanceof Get &&
     x.path.parent.type === 'CallExpression' &&
@@ -331,5 +362,4 @@ console.dir(freeVars.get('require').operations.reduce((acc, x) => {
   }
   return acc;
 }, []), {depth: 5});
-console.dir(freeVars.get('free'), {depth: 4})
-// todo, iterative crawl to find non-strict `this` usage inside functions
+console.dir(freeVars.get('this'), {depth: 4});
