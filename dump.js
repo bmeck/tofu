@@ -374,8 +374,10 @@ function check(body) {
     }
     return {value};
   };
+  let requires = [];
+  let free_variables = {};
   if (freeVars.has('require')) {
-    console.dir(freeVars.get('require').operations.reduce((acc, x) => {
+    requires = freeVars.get('require').operations.reduce((acc, x) => {
       if (x instanceof Get &&
         x.path.parent.type === 'CallExpression' &&
         x.path.key === 'callee') {
@@ -397,6 +399,25 @@ function check(body) {
         // warn?
       }
       return acc;
-    }, []), {depth: 5});
+    }, []);
+  }
+  for (const [k,v] of freeVars.entries()) {
+    const store = freeVars[k] = {
+      gets: [],
+      sets: [],
+      declares: [],
+    };
+    for (const op of v.operations) {
+      let loc = op.path.node.loc;
+      if (op instanceof Get) {
+        store.gets.push({loc});
+      } else if (op instanceof Set) {
+        store.sets.push({loc});
+      } else if (op instanceof Declare) {
+        store.declares.push({loc});
+      } else {
+        // warn?
+      }
+    }
   }
 }
