@@ -174,6 +174,14 @@ const walkExpression = (path, scopeStack) => {
     path.type === 'AwaitExpression' ||
     path.type === 'YieldExpression') {
     walkExpression(path.get('argument'), scopeStack);
+  } else if (path.type === 'JSXElement') {
+    scopeStack.markOperation(new Get(path.get('openingElement', 'name', 'name').node, path));
+    for (const attrValue of path.get('openingElement', 'attributes')) {
+      walkExpression(attrValue.get('value'), scopeStack);
+    }
+    for (const attrValue of path.get('children')) {
+      walkExpression(attrValue.get('expression'), scopeStack);
+    }
   } else if (path.type === 'BinaryExpression') {
     walkExpression(path.get('left'), scopeStack);
     walkExpression(path.get('right'), scopeStack);
