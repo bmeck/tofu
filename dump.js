@@ -23,8 +23,16 @@ class Binding {
     this.operations = [];
   }
 }
+// points to other module bindings
+class Import {
+  constructor(specifier, names = [], path) {
+    this.specifier = specifier;
+    this.names = names;
+    this.path = path;
+  }
+}
 class Scope {
-  constructor(parent = null, declareCatches, modes = []) {
+  constructor(parent = null, declareCatches, modes = [], catchImports = false) {
     this.parent = parent;
     this.children = [];
     if (parent) {
@@ -33,6 +41,8 @@ class Scope {
     this.declareCatches = declareCatches;
     this.variables = new Map();
     this.modes = modes;
+    this.imports = [];
+    this.catchImports = catchImports;
   }
   hasMode(mode) {
     if (this.modes.includes(mode)) {
@@ -41,6 +51,13 @@ class Scope {
       return this.parent.hasMode(mode);
     }
     return false;
+  }
+  import(specifier, importedNames/*not local, "*" is namespace per ImportEntry Record */, path) {
+    if (this.catchImports) {
+      this.imports.push(new Import(specifier, importedNames, path));
+    } else if (this.parent) {
+      this.parent.import(specifier, importedNames, path);
+    }
   }
   encounter(operation) {
     const {variables} = this;
@@ -68,10 +85,10 @@ class Scope {
   }
 }
 class ScopeStack {
-  constructor(topScope) {
+  constructor(topScope, modes, catchImports) {
     this.scopes = [];
     if (topScope) {
-      this.push(topScope);
+      this.push(topScope, modes, catchImports);
     }
     this.pendingEncounters = [];
   }
@@ -83,9 +100,9 @@ class ScopeStack {
   hasMode(mode) {
     return this.current.hasMode(mode);
   }
-  push(catcher, modes) {
+  push(catcher, modes, catchImports) {
     this.scopes.push(
-      new Scope(this.current, catcher, modes)
+      new Scope(this.current, catcher, modes, catchImports)
     );
   }
   pop() {
@@ -93,6 +110,9 @@ class ScopeStack {
   }
   declare(decl) {
     this.current.encounter(decl);
+  }
+  import(specifier, names, path) {
+    this.current.import(specifier, names, path);
   }
   markOperation(operation, scope = this.current) {
     this.pendingEncounters.push({
@@ -227,8 +247,8 @@ const hasUseStrict = (directiveHoldingPath) => {
     ...directives
   ].find((d) => d.get('value', 'value').node === 'use strict');
 };
-const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
-  for (const child of path.entries()) {
+const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), ctx = {}) => {
+  for (const child of path) {
     let finalizers = [];
     if (child.type === 'Program') {
       finalizers.push(() => scopeStack.pop());
@@ -294,6 +314,32 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
       walkExpression(child.get('object'), scopeStack);
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(WithCatch);
+    } else if (child.type === 'ImportDeclaration') {
+      scopeStack.import(child.get('source'), [...child.get('specifiers')].map(
+        b => {
+          if (b.type === 'ImportDefaultSpecifier') return 'default';
+          else if (b.type === 'ImportNamespaceSpecifier') return '*';
+          else if (b.type === 'ImportSpecifier') return b.get('imported', 'name').node;
+          else {
+            // warn
+          }
+        }
+      ), child);
+    } else if (child.type === 'ExportAllDeclaration') {
+      scopeStack.import(child.get('source'), ['*'], child);
+    }  else if (child.type === 'ExportNamedDeclaration' && child.get('source').node) {
+      scopeStack.import(child.get('source'), [...child.get('specifiers')].map(
+        b => {
+          if (b.type === 'ExportSpecifier') return b.get('local', 'name').node;
+          else if (b.type === 'ExportDefaultSpecifier') return 'default';
+          else if (b.type === 'ExportNamespaceSpecifier') return '*';
+          else {
+            // warn
+          }
+        }
+      ), child);
+    } else if (child.type === 'Import' && child.parent.type === 'CallExpression' && child.key === 'callee') {
+      scopeStack.import(child.parent.get('arguments', 0), ['*'], child);
     } else if (child.type === 'VariableDeclaration') {
       const kind = {
         'var': BINDING_KINDS.HOISTED,
@@ -340,19 +386,41 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch), ctx = {}) => {
   }
   return scopeStack;
 };
+const USAGE = `
+Usage: node dump.js <file>
+Arguments:
+  file              file which to analyze, if missing uses STDIN
+Options:
+  -h, --help        display this message
+Environment:
+  PARSE_OPTIONS     JSON object for parse options to @babel/parse module
+`;
+if (process.argv.includes('-h') || process.argv.includes('--help')) {
+  console.log(USAGE.trim());
+  process.exit(0);
+}
+
+// see https://babeljs.io/docs/en/babel-parser#options
+const parseOptions = process.env.PARSE_OPTIONS ?
+  JSON.parse(process.env.PARSE_OPTIONS) :
+  {};
+
+// read in and buffer the source text before parsing
 let body = [];
-process.stdin.on('data', (data) => body.push(data));
-process.stdin.on('end', () => {
+const input = process.argv.length > 1 ?
+  require('fs').createReadStream(process.argv[2]) :
+  process.stdin;
+input.on('data', (data) => body.push(data));
+input.on('end', () => {
   check(Buffer.concat(body).toString('utf8'));
 });
+
 const check = (body) => {
-  const root = NodePath.from(parse(body, {
-    // options: https://babeljs.io/docs/en/babel-parser
-    sourceType: 'script'
-  }));
+  const root = NodePath.from(parse(body, parseOptions));
   const scopes = walk(root);
   scopes.resolveOperations();
-  const freeVars = scopes.scopes[0].variables;
+  const globalScope = scopes.scopes[0];
+  const freeVars = globalScope.variables;
   const rawConstExprOf = (path) => {
     let value;
     if (path.type === 'StringLiteral') {
@@ -376,6 +444,25 @@ const check = (body) => {
   };
   let requires = [];
   let freeVariables = {};
+  let imports = [];
+  for (const imp of globalScope.imports) {
+    const specifier = rawConstExprOf(imp.specifier);
+    const loc = imp.path.node.loc;
+    if (specifier) {
+      imports.push({
+        type: 'static',
+        specifier,
+        names: imp.names,
+        loc
+      });
+    } else {
+      imports.push({
+        type: 'dynamic',
+        names: imp.names,
+        loc
+      });
+    }
+  }
   if (freeVars.has('require')) {
     requires = freeVars.get('require').operations.reduce((acc, x) => {
       if (x instanceof Get &&
@@ -422,6 +509,7 @@ const check = (body) => {
   }
   console.log(JSON.stringify({
     requires,
-    freeVariables
+    freeVariables,
+    imports
   }, null, 2));
 }

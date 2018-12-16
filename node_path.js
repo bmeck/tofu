@@ -23,24 +23,13 @@ class NodePath {
     }
     return needle;
   }
-  *entries() {
+  *[Symbol.iterator]() {
     if (!this.node || typeof this.node !== 'object') {
       return;
     }
     yield* [...Object.keys(this.node)].map((key) => {
       return new NodePath(this, this.node[key], key);
     });
-  }
-  *[Symbol.iterator]() {
-    if (Array.isArray(this.node)) {
-      // we need to be sure to map it *before* any yielding
-      // this prevents mutations from skipping items
-      yield* this.node.map((_, i) => {
-        return new NodePath(this, _, i);
-      });
-      return;
-    }
-    throw TypeError(`NodePath .node is not an Array`);
   }
   static from(node) {
     return new NodePath(null, node, null);
