@@ -139,16 +139,29 @@ const CatchCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const FunctionCatch = (kind) => true;
 const WithCatch = (kind) => true;
 // walks in order to mark bindings as being Get
-const walkExpression = (path, scopeStack) => {
+const EXPRESION_TYPE = {
+  Get: 'Get',
+  Set: 'Set',
+  Update: 'Update',
+};
+const markExpression = (name, path, scopeStack, type, scope) => {
+  if (type === EXPRESION_TYPE.Get || type === EXPRESION_TYPE.Update) {
+    scopeStack.markOperation(new Get(name, path), scope);
+  }
+  if (type === EXPRESION_TYPE.Set || type === EXPRESION_TYPE.Update) {
+    scopeStack.markOperation(new Set(name, path), scope);
+  }
+};
+const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
-      walkExpression(element, scopeStack);
+      walkExpression(element, scopeStack, type);
     }
   } else if (path.type === 'Identifier') {
     const name = path.get('name').node;
-    scopeStack.markOperation(new Get(name, path));
+    markExpression(name, path, scopeStack, type);
   } else if (path.type === 'Super') {
-    scopeStack.markOperation(new Get('super', path));
+    markExpression('super', path, scopeStack, type);
   } else if (path.type === 'ThisExpression') {
     if (!scopeStack.current.hasMode('strict')) {
       // sloppy this accesses globals
@@ -157,23 +170,24 @@ const walkExpression = (path, scopeStack) => {
         while (needle.parent) {
           needle = needle.parent;
         }
-        scopeStack.markOperation(new Get('this', path), needle);
+        markExpression('this', path, scopeStack, type, needle);
       }
     }
-    scopeStack.markOperation(new Get('this', path));
+    markExpression('this', path, scopeStack, type);
   } else if (path.type === 'CallExpression' || path.type === 'NewExpression') {
     walkExpression(path.get('callee'), scopeStack);
     walkExpression(path.get('arguments'), scopeStack);
   } else if (path.type === 'MemberExpression') {
-    walkExpression(path.get('object'), scopeStack);
+    walkExpression(path.get('object'), scopeStack, type);
     if (path.get('computed').node) {
       walkExpression(path.get('property'), scopeStack);
     }
   } else if (path.type === 'UnaryExpression' ||
-    path.type === 'UpdateExpression' ||
     path.type === 'AwaitExpression' ||
     path.type === 'YieldExpression') {
     walkExpression(path.get('argument'), scopeStack);
+  } else if (path.type === 'UpdateExpression') {
+    walkExpression(path.get('argument'), scopeStack, EXPRESION_TYPE.Update);
   } else if (path.type === 'JSXElement') {
     scopeStack.markOperation(new Get(path.get('openingElement', 'name', 'name').node, path));
     for (const attrValue of path.get('openingElement', 'attributes')) {
@@ -206,6 +220,9 @@ const walkExpression = (path, scopeStack) => {
     walkExpression(path.get('alternate'), scopeStack);
   } else if (path.type === 'SequenceExpression') {
     walkExpression(path.get('expressions'), scopeStack);
+  } else if (path.type === 'AssignmentExpression') {
+    walkExpression(path.get('left'), scopeStack, EXPRESION_TYPE.Set);
+    walkExpression(path.get('right'), scopeStack);
   } else if (path.type === 'TaggedTemplateExpression') {
     walkExpression(path.get('tag'), scopeStack);
     walkExpression(path.get('quasi'), scopeStack);
