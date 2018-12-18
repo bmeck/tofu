@@ -23,9 +23,12 @@ class Get extends BindingOperation {
       } else if (path.parent.type === 'NewExpression' && path.key === 'callee') {
         purpose = GET_PURPOSE.Construct;
       } else if (path.parent.type === 'BinaryExpression' &&
-        ['===', '!=='].includes(path.parent.get('operator').node) || path.parent.type === 'ExpressionStatement') {
-        purpose = GET_PURPOSE.Identity;
-      } else {
+      ['===', '!=='].includes(path.parent.get('operator').node)) {
+      purpose = GET_PURPOSE.Identity;
+    }  else if (path.parent.type === 'UnaryExpression' &&
+      ['typeof'].includes(path.parent.get('operator').node)) {
+      purpose = GET_PURPOSE.Identity;
+    } else {
         purpose = GET_PURPOSE.ComplexReified;
       }
     }
@@ -59,6 +62,14 @@ class Scope {
     this.modes = modes;
     this.imports = [];
     this.catchImports = catchImports;
+  }
+  toJSON() {
+    const ret = {
+      ...this
+    };
+    ret.variables = [...ret.variables.entries()];
+    delete ret.parent;
+    return ret;
   }
   hasMode(mode) {
     if (this.modes.includes(mode)) {
@@ -107,6 +118,11 @@ class ScopeStack {
       this.push(topScope, modes, catchImports);
     }
     this.pendingEncounters = [];
+  }
+  toJSON() {
+    const ret = {...this};
+    delete ret.pendingEncounters;
+    return ret;
   }
   get current() {
     return this.scopes.length > 0 ?
@@ -161,6 +177,7 @@ const EXPRESION_TYPE = {
   Update: 'Update',
 };
 const GET_PURPOSE = {
+  TypeOf: 'TypeOf',
   Call: 'Call',
   ComplexReified: 'ComplexReified',
   Construct: 'Construct',
@@ -451,7 +468,8 @@ Options:
 Environment:
   PARSE_OPTIONS     JSON object for parse options to @babel/parse module
 `;
-if (process.argv.includes('-h') || process.argv.includes('--help')) {
+var argv = require('minimist')(process.argv.slice(2));
+if (argv.h || argv.help) {
   console.log(USAGE.trim());
   process.exit(0);
 }
@@ -463,8 +481,8 @@ const parseOptions = process.env.PARSE_OPTIONS ?
 
 // read in and buffer the source text before parsing
 let body = [];
-const input = process.argv.length > 1 ?
-  require('fs').createReadStream(process.argv[2]) :
+const input = argv._.length ?
+  require('fs').createReadStream(argv._[0]) :
   process.stdin;
 input.on('data', (data) => body.push(data));
 input.on('end', () => {
@@ -475,6 +493,10 @@ const check = (body) => {
   const root = NodePath.from(parse(body, parseOptions));
   const scopes = walk(root);
   scopes.resolveOperations();
+  if (argv.r || argv.raw) {
+    console.log(JSON.stringify(scopes, null, 2));
+    process.exit(0);
+  }
   const globalScope = scopes.scopes[0];
   const freeVars = globalScope.variables;
   const rawConstExprOf = (path) => {
