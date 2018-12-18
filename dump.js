@@ -15,8 +15,24 @@ class Declare extends BindingOperation {
   }
 }
 class Get extends BindingOperation {
+  constructor(name, path, purpose) {
+    super(name, path);
+    if (!purpose) {
+      if (path.parent.type === 'CallExpression' && path.key === 'callee') {
+        purpose = GET_PURPOSE.Call;
+      } else if (path.parent.type === 'NewExpression' && path.key === 'callee') {
+        purpose = GET_PURPOSE.Construct;
+      } else if (path.parent.type === 'BinaryExpression' &&
+        ['===', '!=='].includes(path.parent.get('operator').node) || path.parent.type === 'ExpressionStatement') {
+        purpose = GET_PURPOSE.Identity;
+      } else {
+        purpose = GET_PURPOSE.ComplexReified;
+      }
+    }
+    this.purpose = purpose;
+  }
 }
-class Set extends BindingOperation {
+class Put extends BindingOperation {
 }
 class Binding {
   constructor() {
@@ -141,15 +157,26 @@ const WithCatch = (kind) => true;
 // walks in order to mark bindings as being Get
 const EXPRESION_TYPE = {
   Get: 'Get',
-  Set: 'Set',
+  Put: 'Put',
   Update: 'Update',
+};
+const GET_PURPOSE = {
+  Call: 'Call',
+  ComplexReified: 'ComplexReified',
+  Construct: 'Construct',
+  Identity: 'Identity',
 };
 const markExpression = (name, path, scopeStack, type, scope) => {
   if (type === EXPRESION_TYPE.Get || type === EXPRESION_TYPE.Update) {
     scopeStack.markOperation(new Get(name, path), scope);
   }
-  if (type === EXPRESION_TYPE.Set || type === EXPRESION_TYPE.Update) {
-    scopeStack.markOperation(new Set(name, path), scope);
+  if (type === EXPRESION_TYPE.Put || type === EXPRESION_TYPE.Update) {
+    // check if we are getting the variable for prop access
+    if (path.parent.type === 'MemberExpression' && path.key === 'object') {
+      scopeStack.markOperation(new Get(name, path), scope);
+    } else {
+      scopeStack.markOperation(new Put(name, path), scope);
+    }
   }
 };
 const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
@@ -185,7 +212,11 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'UnaryExpression' ||
     path.type === 'AwaitExpression' ||
     path.type === 'YieldExpression') {
-    walkExpression(path.get('argument'), scopeStack);
+    let kind = EXPRESION_TYPE.Get;
+    if (path.get('operator').node === 'delete') {
+      kind = EXPRESION_TYPE.Put;
+    }
+    walkExpression(path.get('argument'), scopeStack, kind);
   } else if (path.type === 'UpdateExpression') {
     walkExpression(path.get('argument'), scopeStack, EXPRESION_TYPE.Update);
   } else if (path.type === 'JSXElement') {
@@ -221,7 +252,7 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'SequenceExpression') {
     walkExpression(path.get('expressions'), scopeStack);
   } else if (path.type === 'AssignmentExpression') {
-    walkExpression(path.get('left'), scopeStack, EXPRESION_TYPE.Set);
+    walkExpression(path.get('left'), scopeStack, EXPRESION_TYPE.Put);
     walkExpression(path.get('right'), scopeStack);
   } else if (path.type === 'TaggedTemplateExpression') {
     walkExpression(path.get('tag'), scopeStack);
@@ -240,7 +271,7 @@ const walkPattern = (path, scopeStack, kind, init) => {
     const name = path.get('name').node;
     scopeStack.declare(new Declare(kind, name, path));
     if (init && init.node) {
-      scopeStack.markOperation(new Set(name, init));
+      scopeStack.markOperation(new Put(name, init));
     }
   } else if (path.type === 'AssignmentPattern') {
     walkPattern(path.get('left'), scopeStack, kind, init);
@@ -516,15 +547,16 @@ const check = (body) => {
   for (const [k,v] of freeVars.entries()) {
     const store = freeVariables[k] = {
       gets: [],
-      sets: [],
+      puts: [],
       declares: [],
     };
     for (const op of v.operations) {
-      let loc = op.path.node.loc;
+      const loc = op.path.node.loc;
       if (op instanceof Get) {
-        store.gets.push({loc});
-      } else if (op instanceof Set) {
-        store.sets.push({loc});
+        const purpose = op.purpose;
+        store.gets.push({loc, purpose});
+      } else if (op instanceof Put) {
+        store.puts.push({loc});
       } else if (op instanceof Declare) {
         store.declares.push({loc});
       } else {
