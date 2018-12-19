@@ -456,7 +456,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), c
     } else if (child.type === 'ExpressionStatement') {
       walkExpression(child.get('expression'), scopeStack);
     } else if (child.type === 'ThrowStatement' || child.type === 'ReturnStatement') {
-      walkExpression(child.get('expression'), scopeStack);
+      walkExpression(child.get('argument'), scopeStack);
     }
     walk(child, scopeStack, ctx);
     for (const fn of finalizers) {
