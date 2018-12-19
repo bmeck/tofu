@@ -511,15 +511,15 @@ const check = (body) => {
   const rawConstExprOf = (path) => {
     let value;
     if (path.type === 'StringLiteral') {
-      value = path.node.extra.raw;
+      value = JSON.stringify(path.node.value);
     } else if (path.type === 'TemplateLiteral') {
       if (path.get('expressions').node.length !== 0) {
         return null;
       }
       // assert quasis.length === 1 && quasis[len-1].tail === true
-      value = path.get('quasis')[0].value.raw;
+      value = JSON.stringify(path.get('quasis')[0].value.cooked);
     } else if (path.type === 'BooleanLiteral') {
-      value = `${path.node.value}`;
+      value = path.node.value ? 'true' : 'false';
     } else if (path.type === 'NumericLiteral') {
       value = path.node.extra.raw;
     } else if (path.type === 'NullLiteral') {
