@@ -23,12 +23,14 @@ class Get extends BindingOperation {
       } else if (path.parent.type === 'NewExpression' && path.key === 'callee') {
         purpose = GET_PURPOSE.Construct;
       } else if (path.parent.type === 'BinaryExpression' &&
-      ['===', '!=='].includes(path.parent.get('operator').node)) {
+          ['===', '!=='].includes(path.parent.get('operator').node)) {
       purpose = GET_PURPOSE.Identity;
-    }  else if (path.parent.type === 'UnaryExpression' &&
-      ['typeof'].includes(path.parent.get('operator').node)) {
-      purpose = GET_PURPOSE.Identity;
-    } else {
+      } else if (path.parent.type === 'UnaryExpression' &&
+          ['typeof'].includes(path.parent.get('operator').node)) {
+        purpose = GET_PURPOSE.Identity;
+      } else if (path.type === 'JSXElement') {
+        purpose = GET_PURPOSE.JSXTag;
+      } else {
         purpose = GET_PURPOSE.ComplexReified;
       }
     }
@@ -182,6 +184,7 @@ const GET_PURPOSE = {
   ComplexReified: 'ComplexReified',
   Construct: 'Construct',
   Identity: 'Identity',
+  JSXTag: 'JSXTag', // differentiated because of implicit tags like <div>
 };
 const markExpression = (name, path, scopeStack, type, scope) => {
   if (type === EXPRESION_TYPE.Get || type === EXPRESION_TYPE.Update) {
