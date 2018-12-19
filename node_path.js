@@ -19,7 +19,11 @@ class NodePath {
   get(...keys) {
     let needle = this;
     for (const key of keys) {
-      needle = new NodePath(needle, needle.node[key], key);
+      let node = null;
+      if (typeof needle.node === 'object' && needle.node) {
+        node = needle.node[key];
+      }
+      needle = new NodePath(needle, node, key);
     }
     return needle;
   }

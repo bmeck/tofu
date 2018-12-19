@@ -1,9 +1,45 @@
 'use strict';
 const child_process = require('child_process');
-const out = child_process.execSync('npm pack --dry-run --json --loglevel=silent');
-const paths = JSON.parse(out)[0].files.map(f => f.path);
+const fs = require('fs');
+const rimraf = require('rimraf');
 
 const path = require('path');
+const out = child_process.execSync('npm i --dry-run --json --loglevel=silent');
+{
+  const {
+    added,
+    removed,
+    updated,
+    moved,
+    failed,
+  } = JSON.parse(out);
+  const grants = JSON.parse(fs.readFileSync('tofu.json', 'utf8') || '{}');
+  rimraf.sync('.tofu/');
+  fs.mkdirSync('.tofu/', {
+    recursive: true
+  });
+  console.dir(added, removed, updated, moved);
+  for (const {name, version, path: addedPath} of added) {
+    const tarball = child_process.execSync(`npm pack --loglevel=silent ${name}@${version}`, {
+      cwd: '.tofu',
+      encoding: 'UTF-8'
+    }).trimRight();
+    const tarOut = child_process.execSync(`tar -xzf ${tarball}`, {
+      cwd: '.tofu',
+      encoding: 'UTF-8'
+    });
+    fs.renameSync(
+      path.join('.tofu', 'package'),
+      path.join('.tofu', tarball.slice(0, -path.extname(tarball).length))
+    );
+    fs.unlinkSync(path.join('.tofu', tarball));
+  }
+}
+const rrdir = require('rrdir');
+const files = rrdir.sync('.tofu', {
+  strict: true,
+});
+const paths = files.filter(f => !f.directory).map(f => f.path);
 const ambient = new Set();
 for (const file of paths) {
   const ret = child_process.spawnSync(process.execPath, [
