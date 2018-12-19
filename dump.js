@@ -363,6 +363,10 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), c
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(FunctionCatch, hasUseStrict(child) ? ['strict'] : []);
       walkPattern(child.get('params'), scopeStack, BINDING_KINDS.HOISTED, null);
+      const body = child.get('body');
+      if (body.type !== 'BlockStatement') {
+        walkExpression(body, scopeStack);
+      }
     } else if (child.type === 'ObjectMethod' || child.type === 'ClassMethod') {
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(FunctionCatch, hasUseStrict(child) ? ['strict'] : []);
@@ -450,6 +454,8 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), c
     } else if (child.type === 'SwitchClause') {
       walkExpression(child.get('test'), scopeStack);
     } else if (child.type === 'ExpressionStatement') {
+      walkExpression(child.get('expression'), scopeStack);
+    } else if (child.type === 'ThrowStatement' || child.type === 'ReturnStatement') {
       walkExpression(child.get('expression'), scopeStack);
     }
     walk(child, scopeStack, ctx);
