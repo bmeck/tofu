@@ -19,7 +19,7 @@ const ModuleCatch = (kind) => true;
 const BlockCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const CatchCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const FunctionCatch = (kind) => true;
-const WithCatch = (kind) => true;
+const WithCatch = (kind) => false;
 
 const EXPRESION_TYPE = {
   Get: 'Get',
