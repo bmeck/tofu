@@ -105,12 +105,15 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'JSXElement') {
     markExpression(path.get('openingElement', 'name', 'name').node, path, scopeStack, EXPRESION_TYPE.Get);
     for (const attrValue of path.get('openingElement', 'attributes')) {
-      walkExpression(attrValue.get('value'), scopeStack);
+      walkExpression(attrValue.get('value', 'expression'), scopeStack);
     }
     for (const attrValue of path.get('children')) {
       walkExpression(attrValue.get('expression'), scopeStack);
     }
   } else if (path.type === 'BinaryExpression') {
+    walkExpression(path.get('left'), scopeStack);
+    walkExpression(path.get('right'), scopeStack);
+  }  else if (path.type === 'LogicalExpression') {
     walkExpression(path.get('left'), scopeStack);
     walkExpression(path.get('right'), scopeStack);
   } else if (path.type === 'ArrayExpression') {

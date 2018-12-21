@@ -64,10 +64,54 @@ const DYNAMIC_REQUIRE_CALL_EXPECTATION = {
   gets: [{purpose: 'Call'}],
   requires: [{type: 'dynamic'}]
 }
+const binaryOps = [
+  '+',
+  '-',
+  '%',
+  '*',
+  '/',
+  '**',
+  '||',
+  '&&',
+  '^',
+  '|',
+  '&',
+  '<',
+  '>',
+  '==',
+  '<=',
+  '>=',
+  '===',
+  'instanceof',
+];
+const unaryOps = [
+  '+',
+  '-',
+  '~',
+  '!',
+  'typeof',
+  'void',
+  'delete'
+];
 const FIXTURES = [
   {
     name: 'Empty',
     sourceTexts: [''],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'Line Comment',
+    sourceTexts: ['// require(fs)'],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'Block Comment',
+    sourceTexts: ['/* require(fs) */'],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'In Directive',
+    sourceTexts: explodeDelimiters(['', 'require(fs)', '']),
     expected: scaffoldFixture()
   },
   {
@@ -103,13 +147,18 @@ const FIXTURES = [
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
-    name: 'Binary Expression Dynamic String',
-    sourceTexts: ['0 + require("f" + "s")'],
+    name: 'Binary Expression Right Dynamic String',
+    sourceTexts: binaryOps.map(s => `0 ${s} require("f" + "s")`),
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Binary Expression Left Dynamic String',
+    sourceTexts: binaryOps.map(s => `require("f" + "s") ${s} 1`),
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
     name: 'Unary Expression Dynamic String',
-    sourceTexts: ['+require("f" + "s")'],
+    sourceTexts: unaryOps.map(s => `${s} require("f" + "s")`),
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
@@ -152,6 +201,86 @@ const FIXTURES = [
     sourceTexts: ['(function* () {yield require("f" + "s")})'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
+  {
+    name: 'Import expression Dynamic String',
+    sourceTexts: ['import(require("f" + "s"))'],
+    expected: {
+      ...scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]),
+      imports: [
+        {names: ['*'], type: 'dynamic'}
+      ]
+    }
+  },
+  {
+    name: 'Super expression Dynamic String',
+    sourceTexts: ['(class {constructor() { super(require("f" + "s")) }})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Calculated member expression Dynamic String',
+    sourceTexts: ['{let x;x[require("f" + "s")]}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Variable init',
+    sourceTexts: ['{let x = require("f" + "s")}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Array Literal',
+    sourceTexts: ['[require("f" + "s")]'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Array Spread value',
+    sourceTexts: ['([...require("f" + "s")])'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Object Literal key',
+    sourceTexts: ['({"require(fs)": {}})'],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'Object Literal computed key',
+    sourceTexts: ['({[require("f" + "s")]: {}})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Object Literal value',
+    sourceTexts: ['({"": [require("f" + "s")]})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Object Spread value',
+    sourceTexts: ['({...require("f" + "s")})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Parameter value',
+    sourceTexts: ['(() => {})(require("f" + "s"))'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Parameter Spread value',
+    sourceTexts: ['(() => {})(...require("f" + "s"))'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'JSX value',
+    sourceTexts: ['{let a;<a>{require("f" + "s")}</a>}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'JSX Attribute value',
+    sourceTexts: ['{let a;<a href={require("f" + "s")}></a>}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'JSX Attribute string',
+    sourceTexts: [`{let a;<a href="require(fs)"></a>}`],
+    expected: scaffoldFixture()
+  },
 ];
 
 const assert = require('assert');
@@ -159,8 +288,14 @@ for (let {
   name,
   sourceTexts,
   expected,
-  parseOptions = {}
+  parseOptions = {
+    plugins: [
+      'dynamicImport',
+      'jsx'
+    ]
+  }
 } of FIXTURES) {
+  // console.error(name)
   if (typeof sourceTexts === 'function') {
     sourceTexts = sourceTexts();
   }
