@@ -100,6 +100,34 @@ const FIXTURES = [
     expected: scaffoldFixture()
   },
   {
+    name: 'Non-call get',
+    sourceTexts: ['require'],
+    expected: ((s) => {
+      s.freeVariables.require = {
+        declares: [],
+        gets: [{
+          purpose: 'ComplexReified'
+        }],
+        puts: []
+      };
+      return s;
+    })(scaffoldFixture())
+  },
+  {
+    name: 'Non-call member',
+    sourceTexts: ['require.extensions'],
+    expected: ((s) => {
+      s.freeVariables.require = {
+        declares: [],
+        gets: [{
+          purpose: 'ComplexReified'
+        }],
+        puts: []
+      };
+      return s;
+    })(scaffoldFixture())
+  },
+  {
     name: 'Line Comment',
     sourceTexts: ['// require(fs)'],
     expected: scaffoldFixture()
