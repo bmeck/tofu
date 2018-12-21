@@ -53,7 +53,7 @@ const analyze = (scopes, {loc: keepLocations = true} = {}) => {
   if (freeVars.has('require')) {
     requires = freeVars.get('require').operations.reduce((acc, x) => {
       if (x instanceof Get &&
-        x.path.parent.type === 'CallExpression' &&
+        (x.path.parent.type === 'CallExpression' || x.path.parent.type === 'NewExpression') &&
         x.path.key === 'callee') {
         // call to require
         const args = x.path.parent.get('arguments');

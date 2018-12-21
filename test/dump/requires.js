@@ -91,7 +91,7 @@ const unaryOps = [
   '!',
   'typeof',
   'void',
-  'delete'
+  'delete',
 ];
 const FIXTURES = [
   {
@@ -214,6 +214,20 @@ const FIXTURES = [
   {
     name: 'Super expression Dynamic String',
     sourceTexts: ['(class {constructor() { super(require("f" + "s")) }})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'New expression Dynamic String',
+    sourceTexts: ['new require("f" + "s")'],
+    expected: ((s) => {
+      s = JSON.parse(JSON.stringify(s));
+      s.freeVariables.require.gets[0].purpose = 'Construct';
+      return s;
+    })(scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]))
+  },
+  {
+    name: 'Extends expression Dynamic String',
+    sourceTexts: ['(class extends require("f" + "s") {})'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
