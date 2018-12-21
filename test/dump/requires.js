@@ -147,6 +147,25 @@ const FIXTURES = [
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
+    name: 'With Statement Object Dynamic String',
+    sourceTexts: ['with(require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Eval Argument Dynamic String',
+    sourceTexts: ['eval(require("f" + "s"))'],
+    expected: ((s) => {
+      s.freeVariables.eval = {
+        declares: [],
+        gets: [{
+          purpose: 'Call'
+        }],
+        puts: []
+      };
+      return s;
+    })(scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]))
+  },
+  {
     name: 'Binary Expression Right Dynamic String',
     sourceTexts: binaryOps.map(s => `0 ${s} require("f" + "s")`),
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
