@@ -130,7 +130,53 @@ const FIXTURES = [
   {
     name: 'Import Specifier',
     sourceTexts: ['import "require(fs)"'],
-    expected: scaffoldFixture(),
+    expected: {
+      freeVariables: {},
+      requires: [],
+      imports: [
+        {
+          names: [], specifier: {
+            value: JSON.stringify("require(fs)")
+          }, type: 'static'
+        }
+      ]
+    },
+    parseOptions: {
+      sourceType: 'module'
+    }
+  },
+  {
+    name: 'Named Export From Specifier',
+    sourceTexts: ['export {_} from "require(fs)"'],
+    expected: {
+      freeVariables: {},
+      requires: [],
+      imports: [
+        {
+          names: ['_'], specifier: {
+            value: JSON.stringify("require(fs)")
+          }, type: 'static'
+        }
+      ]
+    },
+    parseOptions: {
+      sourceType: 'module'
+    }
+  },
+  {
+    name: 'Export Star From Specifier',
+    sourceTexts: ['export * from "require(fs)"'],
+    expected: {
+      freeVariables: {},
+      requires: [],
+      imports: [
+        {
+          names: ['*'], specifier: {
+            value: JSON.stringify("require(fs)")
+          }, type: 'static'
+        }
+      ]
+    },
     parseOptions: {
       sourceType: 'module'
     }
@@ -176,6 +222,11 @@ const FIXTURES = [
     name: 'Expression Statement Dynamic String',
     sourceTexts: ['require("f" + "s")'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Shadowed',
+    sourceTexts: ['{let require; require("fs");}'],
+    expected: scaffoldFixture()
   },
   {
     name: 'Block Statement Dynamic String',
