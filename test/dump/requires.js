@@ -128,6 +128,14 @@ const FIXTURES = [
     })(scaffoldFixture())
   },
   {
+    name: 'Import Specifier',
+    sourceTexts: ['import "require(fs)"'],
+    expected: scaffoldFixture(),
+    parseOptions: {
+      sourceType: 'module'
+    }
+  },
+  {
     name: 'Line Comment',
     sourceTexts: ['// require(fs)'],
     expected: scaffoldFixture()
