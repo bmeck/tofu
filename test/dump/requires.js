@@ -110,6 +110,16 @@ const FIXTURES = [
     expected: scaffoldFixture()
   },
   {
+    name: 'RegExp',
+    sourceTexts: ['/require(fs)/'],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'Static MemberExpression',
+    sourceTexts: ['({}.require("fs"))'],
+    expected: scaffoldFixture()
+  },
+  {
     name: 'In Directive',
     sourceTexts: explodeDelimiters(['', 'require(fs)', '']),
     expected: scaffoldFixture()
@@ -245,8 +255,13 @@ const FIXTURES = [
     })(scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]))
   },
   {
-    name: 'Extends expression Dynamic String',
+    name: 'Extends class expression Dynamic String',
     sourceTexts: ['(class extends require("f" + "s") {})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Extends class declaration Dynamic String',
+    sourceTexts: ['{class Foo extends require("f" + "s") {}}'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
@@ -337,6 +352,50 @@ const FIXTURES = [
   {
     name: 'For Update',
     sourceTexts: ['for(;;require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For In Object Bare Binding Block',
+    sourceTexts: ['for(eval in require("f" + "s")) {}'],
+    expected:  ((s) => {
+      s.freeVariables.eval = {
+        declares: [],
+        gets: [],
+        puts: [{}]
+      };
+      return s;
+    })(scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]))
+  },
+  {
+    name: 'For In Object Block',
+    sourceTexts: ['for(let x in require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For In Object Empty',
+    sourceTexts: ['for(let x in require("f" + "s"));'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Of Object Bare Binding Block',
+    sourceTexts: ['for(eval of require("f" + "s")) {}'],
+    expected:  ((s) => {
+      s.freeVariables.eval = {
+        declares: [],
+        gets: [],
+        puts: [{}]
+      };
+      return s;
+    })(scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION]))
+  },
+  {
+    name: 'For Of Object Block',
+    sourceTexts: ['for(let x of require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Of Object Empty',
+    sourceTexts: ['for(let x of require("f" + "s"));'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {

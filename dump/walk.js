@@ -10,6 +10,7 @@ const {
 const BINDING_KINDS = {
   BLOCK: 'block',
   HOISTED: 'hoisted',
+  BARE: 'bare',
 };
 
 const GlobalCatch = (kind) => true;
@@ -161,7 +162,7 @@ const walkPattern = (path, scopeStack, kind, init) => {
     }
   } else if (path.type === 'Identifier') {
     const name = path.get('name').node;
-    scopeStack.declare(new Declare(kind, name, path));
+    if (kind !== BINDING_KINDS.BARE) scopeStack.declare(new Declare(kind, name, path));
     if (init && init.node) {
       scopeStack.markOperation(new Put(name, init));
     }
@@ -183,7 +184,7 @@ const walkPattern = (path, scopeStack, kind, init) => {
     }
   } else if (path.type === 'RestElement') {
     const name = path.get('argument', 'name').node;
-    scopeStack.declare(new Declare(kind, name, path));
+    if (kind !== BINDING_KINDS.BARE) scopeStack.declare(new Declare(kind, name, path));
   } else if (path.type === 'ImportSpecifier' ||
     path.type === 'ImportDefaultSpecifier' || 
     path.type === 'ImportNamespaceSpecifier') {
@@ -220,6 +221,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
       );
     } else if (child.type === 'BlockStatement') {
       if ([
+        'ForStatement',
         'ForInStatement',
         'ForOfStatement',
       ].includes(child.parent.type)) {
@@ -228,6 +230,16 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
         finalizers.push(() => scopeStack.pop());
         scopeStack.push(BlockCatch);
       }
+    } else if (child.type === 'ForOfStatement' ||
+      child.type === 'ForInStatement') {
+      scopeStack.push(BlockCatch);
+      const left = child.get('left');
+      const right = child.get('right');
+      if (left.type !== 'VariableDeclaration') {
+        walkPattern(left, scopeStack, BINDING_KINDS.BARE, right);
+      }
+      walkExpression(right, scopeStack, EXPRESION_TYPE.Get);
+      finalizers.push(() => scopeStack.pop());
     } else if (child.type === 'CatchClause') {
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(CatchCatch);
