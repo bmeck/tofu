@@ -337,7 +337,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
       walkExpression(child.get('update'), scopeStack);
     } else if (child.type === 'SwitchStatement') {
       walkExpression(child.get('discriminant'), scopeStack);
-    } else if (child.type === 'SwitchClause') {
+    } else if (child.type === 'SwitchCase') {
       walkExpression(child.get('test'), scopeStack);
     } else if (child.type === 'ExpressionStatement') {
       walkExpression(child.get('expression'), scopeStack);

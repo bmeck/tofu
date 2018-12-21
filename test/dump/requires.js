@@ -267,6 +267,56 @@ const FIXTURES = [
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
   },
   {
+    name: 'Template Tag',
+    sourceTexts: ['require("f" + "s")``'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Template Value',
+    sourceTexts: ['`${require("f" + "s")}`'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Do While Test',
+    sourceTexts: ['do {} while(require("f" + "s"))'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'While Test',
+    sourceTexts: ['while(require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Var Init',
+    sourceTexts: ['for(let _ = require("f" + "s");;) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Init',
+    sourceTexts: ['for(require("f" + "s");;) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Test',
+    sourceTexts: ['for(;require("f" + "s");) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'For Update',
+    sourceTexts: ['for(;;require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Switch Test',
+    sourceTexts: ['switch(require("f" + "s")) {}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Case Test',
+    sourceTexts: ['switch([]) {case require("f" + "s"): {}}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
     name: 'JSX value',
     sourceTexts: ['{let a;<a>{require("f" + "s")}</a>}'],
     expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
@@ -284,6 +334,7 @@ const FIXTURES = [
 ];
 
 const assert = require('assert');
+let ran = 0;
 for (let {
   name,
   sourceTexts,
@@ -300,11 +351,13 @@ for (let {
     sourceTexts = sourceTexts();
   }
   for (const text of sourceTexts) {
+    console.error(text)
     const root = NodePath.from(parse(text, parseOptions));
     const scopes = walk(root);
     scopes.resolveOperations();
     const result = JSON.parse(JSON.stringify(analyze(scopes, {loc: false})));
     try {
+      ran++;
       assert.deepStrictEqual(result, expected);
     } catch (e) {
       e.message = `Test: ${name}, Text: ${text}\n${e.message}`;
@@ -312,3 +365,4 @@ for (let {
     }
   }
 }
+console.log('ran', ran)
