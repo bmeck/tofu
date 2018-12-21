@@ -1,0 +1,179 @@
+'use strict';
+const {parse} = require('@babel/parser');
+const {NodePath} = require('../../dump/node_path');
+const walk = require('../../dump/walk');
+const analyze = require('../../dump/analyze');
+const explodeDelimiters = (pat) => {
+  const delimiters = [
+    '"',
+    '\'',
+    '`',
+  ];
+  return delimiters.map(d => {
+    return pat.join(d);
+  });
+}
+const requirePat = (specifier) => {
+  return ['require(', specifier, ')'];
+}
+const generateStaticRequireCallExpectation = (specifier) => ({
+  gets: [
+    {
+      purpose: 'Call'
+    }
+  ],
+  requires: [
+    {
+      type:'static',
+      specifier: {
+        value: '"fs"'
+      }
+    }
+  ],
+});
+const scaffoldFixture = (expected = []) => {
+  let hadRequire = false;
+  const require = {
+    declares: [],
+    gets: [],
+    puts: [],
+  };
+  const fixture = {
+    freeVariables: { },
+    requires: [],
+    imports: [],
+  };
+  for (const {
+    declares = [],
+    gets = [],
+    puts = [],
+    requires = [],
+  } of expected) {
+    hadRequire = true;
+    require.declares.push(...declares);
+    require.gets.push(...gets);
+    require.puts.push(...puts);
+    fixture.requires.push(...requires);
+  }
+  if (hadRequire) {
+    fixture.freeVariables.require = require;
+  }
+  return fixture;
+}
+const DYNAMIC_REQUIRE_CALL_EXPECTATION = {
+  gets: [{purpose: 'Call'}],
+  requires: [{type: 'dynamic'}]
+}
+const FIXTURES = [
+  {
+    name: 'Empty',
+    sourceTexts: [''],
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'In String',
+    sourceTexts: explodeDelimiters(['(', 'require(fs)', ')']),
+    expected: scaffoldFixture()
+  },
+  {
+    name: 'Expression Statement Static String',
+    sourceTexts: explodeDelimiters(['require(','fs',')']),
+    expected: scaffoldFixture([
+      generateStaticRequireCallExpectation('fs')
+    ])
+  },
+  {
+    name: 'Expression Statement Dynamic String',
+    sourceTexts: ['require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Block Statement Dynamic String',
+    sourceTexts: ['{require("f" + "s")}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Throw Statement Dynamic String',
+    sourceTexts: ['throw require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Return Statement Dynamic String',
+    sourceTexts: ['() => {return require("f" + "s")}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Binary Expression Dynamic String',
+    sourceTexts: ['0 + require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Unary Expression Dynamic String',
+    sourceTexts: ['+require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Conditional Expression Dynamic String',
+    sourceTexts: ['require("f" + "s") ? 0 : 1'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Sequential Expression Dynamic String',
+    sourceTexts: ['(require("f" + "s"), 0)'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Let init Dynamic String',
+    sourceTexts: ['{let _ = require("f" + "s")}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Const init Dynamic String',
+    sourceTexts: ['{const _ = require("f" + "s")}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Pattern init Dynamic String',
+    sourceTexts: ['{const [_ = require("f" + "s")] = []}'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Arrow fn body expression Dynamic String',
+    sourceTexts: ['() => require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Await expression Dynamic String',
+    sourceTexts: ['async () => await require("f" + "s")'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+  {
+    name: 'Yield expression Dynamic String',
+    sourceTexts: ['(function* () {yield require("f" + "s")})'],
+    expected: scaffoldFixture([DYNAMIC_REQUIRE_CALL_EXPECTATION])
+  },
+];
+
+const assert = require('assert');
+for (let {
+  name,
+  sourceTexts,
+  expected,
+  parseOptions = {}
+} of FIXTURES) {
+  if (typeof sourceTexts === 'function') {
+    sourceTexts = sourceTexts();
+  }
+  for (const text of sourceTexts) {
+    const root = NodePath.from(parse(text, parseOptions));
+    const scopes = walk(root);
+    scopes.resolveOperations();
+    const result = JSON.parse(JSON.stringify(analyze(scopes, {loc: false})));
+    try {
+      assert.deepStrictEqual(result, expected);
+    } catch (e) {
+      e.message = `Test: ${name}, Text: ${text}\n${e.message}`;
+      throw e;
+    }
+  }
+}

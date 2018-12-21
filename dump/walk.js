@@ -1,170 +1,17 @@
 'use strict';
-const {parse} = require('@babel/parser');
-const {NodePath} = require('./node_path');
 
-class BindingOperation {
-  constructor(name, path) {
-    this.name = name;
-    this.path = path;
-  }
-}
-class Declare extends BindingOperation {
-  constructor(kind, name, path) {
-    super(name, path);
-    this.kind = kind;
-  }
-}
-class Get extends BindingOperation {
-  constructor(name, path, purpose) {
-    super(name, path);
-    if (!purpose) {
-      if (path.parent.type === 'CallExpression' && path.key === 'callee') {
-        purpose = GET_PURPOSE.Call;
-      } else if (path.parent.type === 'NewExpression' && path.key === 'callee') {
-        purpose = GET_PURPOSE.Construct;
-      } else if (path.parent.type === 'BinaryExpression' &&
-          ['===', '!=='].includes(path.parent.get('operator').node)) {
-      purpose = GET_PURPOSE.Identity;
-      } else if (path.parent.type === 'UnaryExpression' &&
-          ['typeof'].includes(path.parent.get('operator').node)) {
-        purpose = GET_PURPOSE.Identity;
-      } else if (path.type === 'JSXElement') {
-        purpose = GET_PURPOSE.JSXTag;
-      } else {
-        purpose = GET_PURPOSE.ComplexReified;
-      }
-    }
-    this.purpose = purpose;
-  }
-}
-class Put extends BindingOperation {
-}
-class Binding {
-  constructor() {
-    this.operations = [];
-  }
-}
-// points to other module bindings
-class Import {
-  constructor(specifier, names = [], path) {
-    this.specifier = specifier;
-    this.names = names;
-    this.path = path;
-  }
-}
-class Scope {
-  constructor(parent = null, declareCatches, modes = [], catchImports = false) {
-    this.parent = parent;
-    this.children = [];
-    if (parent) {
-      parent.children.push(this);
-    }
-    this.declareCatches = declareCatches;
-    this.variables = new Map();
-    this.modes = modes;
-    this.imports = [];
-    this.catchImports = catchImports;
-  }
-  toJSON() {
-    const ret = {
-      ...this
-    };
-    ret.variables = [...ret.variables.entries()];
-    delete ret.parent;
-    return ret;
-  }
-  hasMode(mode) {
-    if (this.modes.includes(mode)) {
-      return true;
-    } else if (this.parent) {
-      return this.parent.hasMode(mode);
-    }
-    return false;
-  }
-  import(specifier, importedNames/*not local, "*" is namespace per ImportEntry Record */, path) {
-    if (this.catchImports) {
-      this.imports.push(new Import(specifier, importedNames, path));
-    } else if (this.parent) {
-      this.parent.import(specifier, importedNames, path);
-    }
-  }
-  encounter(operation) {
-    const {variables} = this;
-    const {name, kind} = operation;
-    if (operation instanceof Declare) {
-      if (this.declareCatches(kind)) {
-        if (!variables.has(name)) {
-          variables.set(name, new Binding());
-        }
-        variables.get(name).operations.push(operation);
-        return;
-      }
-    } else {
-      if (!this.parent) {
-        if (!variables.has(name)) {
-          variables.set(name, new Binding());
-        }
-      }
-      if (variables.has(name)) {
-        variables.get(name).operations.push(operation);
-        return;
-      }
-    }
-    this.parent.encounter(operation);
-  }
-}
-class ScopeStack {
-  constructor(topScope, modes, catchImports) {
-    this.scopes = [];
-    if (topScope) {
-      this.push(topScope, modes, catchImports);
-    }
-    this.pendingEncounters = [];
-  }
-  toJSON() {
-    const ret = {...this};
-    delete ret.pendingEncounters;
-    return ret;
-  }
-  get current() {
-    return this.scopes.length > 0 ?
-      this.scopes[this.scopes.length - 1] :
-      null;
-  }
-  hasMode(mode) {
-    return this.current.hasMode(mode);
-  }
-  push(catcher, modes, catchImports) {
-    this.scopes.push(
-      new Scope(this.current, catcher, modes, catchImports)
-    );
-  }
-  pop() {
-    this.scopes.pop();
-  }
-  declare(decl) {
-    this.current.encounter(decl);
-  }
-  import(specifier, names, path) {
-    this.current.import(specifier, names, path);
-  }
-  markOperation(operation, scope = this.current) {
-    this.pendingEncounters.push({
-      scope,
-      operation
-    });
-  }
-  resolveOperations() {
-    for (const {scope,operation} of this.pendingEncounters) {
-      scope.encounter(operation);
-    }
-    this.pendingEncounters = null;
-  }
-}
+const {
+  Declare,
+  Get,
+  Put,
+  ScopeStack
+} = require('./scope');
+
 const BINDING_KINDS = {
   BLOCK: 'block',
   HOISTED: 'hoisted',
 };
+
 const GlobalCatch = (kind) => true;
 const ScriptCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const ModuleCatch = (kind) => true;
@@ -172,33 +19,49 @@ const BlockCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const CatchCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const FunctionCatch = (kind) => true;
 const WithCatch = (kind) => true;
-// walks in order to mark bindings as being Get
+
 const EXPRESION_TYPE = {
   Get: 'Get',
   Put: 'Put',
   Update: 'Update',
 };
-const GET_PURPOSE = {
-  TypeOf: 'TypeOf',
-  Call: 'Call',
-  ComplexReified: 'ComplexReified',
-  Construct: 'Construct',
-  Identity: 'Identity',
-  JSXTag: 'JSXTag', // differentiated because of implicit tags like <div>
-};
+/**
+ * Properly marks operations for an Expression
+ * Abstracts the check for Set positions that are actually Gets
+ * like `x[0] = 1` being a Get of `x`
+ * @param {string} name 
+ * @param {NodePath} path 
+ * @param {ScopeStack} scopeStack 
+ * @param {EXPRESSION_TYPE} type 
+ * @param {Scope | undefined} scope 
+ */
 const markExpression = (name, path, scopeStack, type, scope) => {
+  let needGet = false;
+  let needSet = false;
   if (type === EXPRESION_TYPE.Get || type === EXPRESION_TYPE.Update) {
-    scopeStack.markOperation(new Get(name, path), scope);
+    needGet = true;
   }
   if (type === EXPRESION_TYPE.Put || type === EXPRESION_TYPE.Update) {
     // check if we are getting the variable for prop access
     if (path.parent.type === 'MemberExpression' && path.key === 'object') {
-      scopeStack.markOperation(new Get(name, path), scope);
+      needGet = true;
     } else {
-      scopeStack.markOperation(new Put(name, path), scope);
+      needSet = true;
     }
   }
+  if (needGet) {
+    scopeStack.markOperation(new Get(name, path), scope);
+  }
+  if (needSet) {
+    scopeStack.markOperation(new Put(name, path), scope);
+  }
 };
+/**
+ * Walks expressions and marks identifiers with relevent operations
+ * @param {NodePath} path 
+ * @param {ScopeStack} scopeStack 
+ * @param {EXPRESION_TYPE} type 
+ */
 const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
@@ -240,7 +103,7 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'UpdateExpression') {
     walkExpression(path.get('argument'), scopeStack, EXPRESION_TYPE.Update);
   } else if (path.type === 'JSXElement') {
-    scopeStack.markOperation(new Get(path.get('openingElement', 'name', 'name').node, path));
+    markExpression(path.get('openingElement', 'name', 'name').node, path, scopeStack, EXPRESION_TYPE.Get);
     for (const attrValue of path.get('openingElement', 'attributes')) {
       walkExpression(attrValue.get('value'), scopeStack);
     }
@@ -281,7 +144,13 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
     walkExpression(path.get('expressions'), scopeStack);
   }
 };
-// walks in order to mark bindings as being Declare
+/**
+ * Walks a binding pattern and marks related declarations
+ * @param {NodePath} path 
+ * @param {ScopeStack} scopeStack 
+ * @param {string} kind 
+ * @param {NodePath} init 
+ */
 const walkPattern = (path, scopeStack, kind, init) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
@@ -295,6 +164,7 @@ const walkPattern = (path, scopeStack, kind, init) => {
     }
   } else if (path.type === 'AssignmentPattern') {
     walkPattern(path.get('left'), scopeStack, kind, init);
+    walkExpression(path.get('right'), scopeStack, EXPRESION_TYPE.Get);
   } else if (path.type === 'ObjectPattern') {
     for (const prop of path.get('properties')) {
       walkPattern(prop, scopeStack, kind, init);
@@ -317,13 +187,23 @@ const walkPattern = (path, scopeStack, kind, init) => {
     walkPattern(path.get('local'), scopeStack, kind, init);
   }
 }
+/**
+ * Tests if the path has the "use strict" directive
+ * @param {NodePath} directiveHoldingPath 
+ * @returns {boolean}
+ */
 const hasUseStrict = (directiveHoldingPath) => {
   const directives = directiveHoldingPath.get('directives');
   return Array.isArray(directives.node) && [
     ...directives
-  ].find((d) => d.get('value', 'value').node === 'use strict');
+  ].some((d) => d.get('value', 'value').node === 'use strict');
 };
-const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), ctx = {}) => {
+/**
+ * Walks an entire AST to produce an analysis of all scopes within
+ * @param {NodePath} path 
+ * @param {ScopeStack} scopeStack 
+ */
+const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) => {
   for (const child of path) {
     let finalizers = [];
     if (child.type === 'Program') {
@@ -461,143 +341,12 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), c
     } else if (child.type === 'ThrowStatement' || child.type === 'ReturnStatement') {
       walkExpression(child.get('argument'), scopeStack);
     }
-    walk(child, scopeStack, ctx);
+    walk(child, scopeStack);
     for (const fn of finalizers) {
       fn();
     }
   }
   return scopeStack;
 };
-const USAGE = `
-Usage: node dump.js <file>
-Arguments:
-  file              file which to analyze, if missing uses STDIN
-Options:
-  -h, --help        display this message
-Environment:
-  PARSE_OPTIONS     JSON object for parse options to @babel/parse module
-`;
-var argv = require('minimist')(process.argv.slice(2));
-if (argv.h || argv.help) {
-  console.log(USAGE.trim());
-  process.exit(0);
-}
 
-// see https://babeljs.io/docs/en/babel-parser#options
-const parseOptions = process.env.PARSE_OPTIONS ?
-  JSON.parse(process.env.PARSE_OPTIONS) :
-  {};
-
-// read in and buffer the source text before parsing
-let body = [];
-const input = argv._.length ?
-  require('fs').createReadStream(argv._[0]) :
-  process.stdin;
-input.on('data', (data) => body.push(data));
-input.on('end', () => {
-  check(Buffer.concat(body).toString('utf8'));
-});
-
-const check = (body) => {
-  const root = NodePath.from(parse(body, parseOptions));
-  const scopes = walk(root);
-  scopes.resolveOperations();
-  if (argv.r || argv.raw) {
-    console.log(JSON.stringify(scopes, null, 2));
-    process.exit(0);
-  }
-  const globalScope = scopes.scopes[0];
-  const freeVars = globalScope.variables;
-  const rawConstExprOf = (path) => {
-    let value;
-    if (path.type === 'StringLiteral') {
-      value = JSON.stringify(path.node.value);
-    } else if (path.type === 'TemplateLiteral') {
-      if (path.get('expressions').node.length !== 0) {
-        return null;
-      }
-      // assert quasis.length === 1 && quasis[len-1].tail === true
-      value = JSON.stringify(path.get('quasis')[0].value.cooked);
-    } else if (path.type === 'BooleanLiteral') {
-      value = path.node.value ? 'true' : 'false';
-    } else if (path.type === 'NumericLiteral') {
-      value = path.node.extra.raw;
-    } else if (path.type === 'NullLiteral') {
-      value = "null";
-    } else {
-      return null;
-    }
-    return {value};
-  };
-  let requires = [];
-  let freeVariables = {};
-  let imports = [];
-  for (const imp of globalScope.imports) {
-    const specifier = rawConstExprOf(imp.specifier);
-    const loc = imp.path.node.loc;
-    if (specifier) {
-      imports.push({
-        type: 'static',
-        specifier,
-        names: imp.names,
-        loc
-      });
-    } else {
-      imports.push({
-        type: 'dynamic',
-        names: imp.names,
-        loc
-      });
-    }
-  }
-  if (freeVars.has('require')) {
-    requires = freeVars.get('require').operations.reduce((acc, x) => {
-      if (x instanceof Get &&
-        x.path.parent.type === 'CallExpression' &&
-        x.path.key === 'callee') {
-        // call to require
-        const args = x.path.parent.get('arguments');
-        if (args.node.length !== 1) {
-          // warn, strange call
-        }
-        const specifier = rawConstExprOf(args.get(0));
-        if (specifier) {
-          acc.push({type: 'static', specifier, loc: x.path.node.loc});
-        } else {
-          acc.push({type: 'dynamic', loc: x.path.node.loc});
-        }
-      } else if (x.path.parent.type === 'MemberExpression' && x.path.key === 'object') {
-        // member expression for require.resolve etc
-      } else {
-        // someone is doing something weird
-        // warn?
-      }
-      return acc;
-    }, []);
-  }
-  for (const [k,v] of freeVars.entries()) {
-    const store = freeVariables[k] = {
-      gets: [],
-      puts: [],
-      declares: [],
-    };
-    for (const op of v.operations) {
-      const loc = op.path.node.loc;
-      if (op instanceof Get) {
-        const purpose = op.purpose;
-        store.gets.push({loc, purpose});
-      } else if (op instanceof Put) {
-        store.puts.push({loc});
-      } else if (op instanceof Declare) {
-        store.declares.push({loc});
-      } else {
-        // warn?
-      }
-    }
-  }
-  console.log(JSON.stringify({
-    requires,
-    freeVariables,
-    imports
-  }, null, 2));
-}
+module.exports = walk;
