@@ -219,19 +219,9 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
           ModuleCatch,
         sourceType === 'module' || hasUseStrict(child) ? ['strict'] : []
       );
-    } else if (child.type === 'BlockStatement') {
-      if ([
-        'ForStatement',
-        'ForInStatement',
-        'ForOfStatement',
-      ].includes(child.parent.type)) {
-        // loop heads are weird
-      } else {
-        finalizers.push(() => scopeStack.pop());
-        scopeStack.push(BlockCatch);
-      }
     } else if (child.type === 'ForOfStatement' ||
       child.type === 'ForInStatement') {
+      finalizers.push(() => scopeStack.pop());
       scopeStack.push(BlockCatch);
       const left = child.get('left');
       const right = child.get('right');
@@ -239,7 +229,6 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
         walkPattern(left, scopeStack, BINDING_KINDS.BARE, right);
       }
       walkExpression(right, scopeStack, EXPRESION_TYPE.Get);
-      finalizers.push(() => scopeStack.pop());
     } else if (child.type === 'CatchClause') {
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(CatchCatch);
