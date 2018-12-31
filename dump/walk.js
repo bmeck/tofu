@@ -7,6 +7,12 @@ const {
   ScopeStack
 } = require('./scope');
 
+/**
+ * Allows scopes to determine if a binding should be
+ * added to the current scope or passed upwards via
+ * 
+ * @enum {string}
+ */
 const BINDING_KINDS = {
   BLOCK: 'block',
   HOISTED: 'hoisted',
@@ -19,9 +25,14 @@ const ModuleCatch = (kind) => true;
 const BlockCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const CatchCatch = (kind) => kind === BINDING_KINDS.BLOCK;
 const FunctionCatch = (kind) => true;
+// with object may always have things fall through
 const WithCatch = (kind) => false;
 
-const EXPRESION_TYPE = {
+/**
+ * @enum {string}
+ */
+const EXPRESSION_TYPE = {
+  __proto__: null,
   Get: 'Get',
   Put: 'Put',
   Update: 'Update',
@@ -39,10 +50,10 @@ const EXPRESION_TYPE = {
 const markExpression = (name, path, scopeStack, type, scope) => {
   let needGet = false;
   let needSet = false;
-  if (type === EXPRESION_TYPE.Get || type === EXPRESION_TYPE.Update) {
+  if (type === EXPRESSION_TYPE.Get || type === EXPRESSION_TYPE.Update) {
     needGet = true;
   }
-  if (type === EXPRESION_TYPE.Put || type === EXPRESION_TYPE.Update) {
+  if (type === EXPRESSION_TYPE.Put || type === EXPRESSION_TYPE.Update) {
     // check if we are getting the variable for prop access
     if (path.parent.type === 'MemberExpression' && path.key === 'object') {
       needGet = true;
@@ -61,9 +72,9 @@ const markExpression = (name, path, scopeStack, type, scope) => {
  * Walks expressions and marks identifiers with relevent operations
  * @param {NodePath} path 
  * @param {ScopeStack} scopeStack 
- * @param {EXPRESION_TYPE} type 
+ * @param {EXPRESSION_TYPE} type 
  */
-const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
+const walkExpression = (path, scopeStack, type = EXPRESSION_TYPE.Get) => {
   if (Array.isArray(path.node)) {
     for (const element of path) {
       walkExpression(element, scopeStack, type);
@@ -96,15 +107,15 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'UnaryExpression' ||
     path.type === 'AwaitExpression' ||
     path.type === 'YieldExpression') {
-    let kind = EXPRESION_TYPE.Get;
+    let kind = EXPRESSION_TYPE.Get;
     if (path.get('operator').node === 'delete') {
-      kind = EXPRESION_TYPE.Put;
+      kind = EXPRESSION_TYPE.Put;
     }
     walkExpression(path.get('argument'), scopeStack, kind);
   } else if (path.type === 'UpdateExpression') {
-    walkExpression(path.get('argument'), scopeStack, EXPRESION_TYPE.Update);
+    walkExpression(path.get('argument'), scopeStack, EXPRESSION_TYPE.Update);
   } else if (path.type === 'JSXElement') {
-    markExpression(path.get('openingElement', 'name', 'name').node, path, scopeStack, EXPRESION_TYPE.Get);
+    markExpression(path.get('openingElement', 'name', 'name').node, path, scopeStack, EXPRESSION_TYPE.Get);
     for (const attrValue of path.get('openingElement', 'attributes')) {
       walkExpression(attrValue.get('value', 'expression'), scopeStack);
     }
@@ -139,7 +150,7 @@ const walkExpression = (path, scopeStack, type = EXPRESION_TYPE.Get) => {
   } else if (path.type === 'SequenceExpression') {
     walkExpression(path.get('expressions'), scopeStack);
   } else if (path.type === 'AssignmentExpression') {
-    walkExpression(path.get('left'), scopeStack, EXPRESION_TYPE.Put);
+    walkExpression(path.get('left'), scopeStack, EXPRESSION_TYPE.Put);
     walkExpression(path.get('right'), scopeStack);
   } else if (path.type === 'TaggedTemplateExpression') {
     walkExpression(path.get('tag'), scopeStack);
@@ -168,7 +179,7 @@ const walkPattern = (path, scopeStack, kind, init) => {
     }
   } else if (path.type === 'AssignmentPattern') {
     walkPattern(path.get('left'), scopeStack, kind, init);
-    walkExpression(path.get('right'), scopeStack, EXPRESION_TYPE.Get);
+    walkExpression(path.get('right'), scopeStack, EXPRESSION_TYPE.Get);
   } else if (path.type === 'ObjectPattern') {
     for (const prop of path.get('properties')) {
       walkPattern(prop, scopeStack, kind, init);
@@ -207,18 +218,36 @@ const hasUseStrict = (directiveHoldingPath) => {
  * @param {NodePath} path 
  * @param {ScopeStack} scopeStack 
  */
-const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) => {
+const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), {
+  forceFunction = false,
+  nonFreeVariables = null,
+  forceStrict = false,
+} = {}) => {
   for (const child of path) {
     let finalizers = [];
     if (child.type === 'Program') {
       finalizers.push(() => scopeStack.pop());
       const sourceType = child.get('sourceType').node;
-      scopeStack.push(
-        sourceType === 'script' ?
-          ScriptCatch :
-          ModuleCatch,
-        sourceType === 'module' || hasUseStrict(child) ? ['strict'] : []
-      );
+      const mode = forceStrict || sourceType === 'module' || hasUseStrict(child) ? ['strict'] : [];
+      if (forceFunction) {
+        scopeStack.push(
+          FunctionCatch,
+          mode
+        )
+      } else {
+        scopeStack.push(
+          sourceType === 'script' ?
+            ScriptCatch :
+            ModuleCatch,
+          mode
+        );
+      }
+      if (nonFreeVariables) {
+        const bindings = nonFreeVariables();
+        for (const name of bindings) {
+          scopeStack.declare(new Declare(BINDING_KINDS.BLOCK, name, child));
+        }
+      }
     } else if (child.type === 'ForOfStatement' ||
       child.type === 'ForInStatement') {
       finalizers.push(() => scopeStack.pop());
@@ -228,7 +257,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true)) =
       if (left.type !== 'VariableDeclaration') {
         walkPattern(left, scopeStack, BINDING_KINDS.BARE, right);
       }
-      walkExpression(right, scopeStack, EXPRESION_TYPE.Get);
+      walkExpression(right, scopeStack, EXPRESSION_TYPE.Get);
     } else if (child.type === 'CatchClause') {
       finalizers.push(() => scopeStack.pop());
       scopeStack.push(CatchCatch);

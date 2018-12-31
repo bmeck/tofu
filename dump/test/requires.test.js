@@ -514,34 +514,37 @@ const FIXTURES = [
 
 const assert = require('assert');
 let ran = 0;
-for (let {
-  name,
-  sourceTexts,
-  expected,
-  parseOptions = {
-    plugins: [
-      'dynamicImport',
-      'jsx'
-    ]
-  }
-} of FIXTURES) {
-  // console.error(name)
-  if (typeof sourceTexts === 'function') {
-    sourceTexts = sourceTexts();
-  }
-  for (const text of sourceTexts) {
-    console.error(text)
-    const root = NodePath.from(parse(text, parseOptions));
-    const scopes = walk(root);
-    scopes.resolveOperations();
-    const result = JSON.parse(JSON.stringify(analyze(scopes, {loc: false})));
-    try {
-      ran++;
-      assert.deepStrictEqual(result, expected);
-    } catch (e) {
-      e.message = `Test: ${name}, Text: ${text}\n${e.message}`;
-      throw e;
+describe('Should detect require() dependencies', () => {
+  for (let {
+    name,
+    sourceTexts,
+    expected,
+    parseOptions = {
+      plugins: [
+        'dynamicImport',
+        'jsx'
+      ]
     }
+  } of FIXTURES) {
+    test(name, () => {
+      // console.error(name)
+      if (typeof sourceTexts === 'function') {
+        sourceTexts = sourceTexts();
+      }
+      for (const text of sourceTexts) {
+        const root = NodePath.from(parse(text, parseOptions));
+        const scopes = walk(root);
+        scopes.resolveOperations();
+        const result = JSON.parse(JSON.stringify(analyze(scopes, {loc: false})));
+        try {
+          ran++;
+          expect(result).toEqual(expected)
+          ;(result, expected);
+        } catch (e) {
+          e.message = `Test: ${name}, Text: ${text}\n${e.message}`;
+          throw e;
+        }
+      }
+    });
   }
-}
-console.log('ran', ran)
+});

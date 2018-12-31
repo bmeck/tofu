@@ -1,6 +1,6 @@
 'use strict';
-const { freeze } = Object;
-const { isArray } = Array;
+const { defineProperty, freeze, keys } = Object;
+const { from: Array_from, isArray } = Array;
 /**
  * Simple class to be able to generate a path from root to a specific node.
  * Used to ease cases of complex inspection by having default operations that
@@ -8,6 +8,7 @@ const { isArray } = Array;
  */
 class NodePath {
   /**
+   * @constructor
    * @private
    * @param {NodePath | null} parent 
    * @param {*} node 
@@ -39,6 +40,9 @@ class NodePath {
    */
   get(...keys) {
     let needle = this;
+    // DO NOT OPTIMIZE THE ALLOCATIONS OUT
+    // WE WANT A FULL PATH OF NodePaths
+    // TO ALLOW RELIABLE .parent COUNT
     for (const key of keys) {
       let node = null;
       if (typeof needle.node === 'object' && needle.node) {
@@ -56,7 +60,8 @@ class NodePath {
     if (!this.node || typeof this.node !== 'object') {
       return;
     }
-    yield* [...Object.keys(this.node)].map((key) => {
+    // we do an eager map to avoid mutation confusion
+    yield* Array_from(keys(this.node), (key) => {
       return new NodePath(this, this.node[key], key);
     });
   }
@@ -69,12 +74,12 @@ class NodePath {
     return new NodePath(null, node, null);
   }
 }
-Object.freeze(NodePath);
-Object.freeze(NodePath.prototype);
+freeze(NodePath);
+freeze(NodePath.prototype);
 
 exports.NodePath = NodePath;
-Object.freeze(exports);
-Object.defineProperty(module, 'exports', {
+freeze(exports);
+defineProperty(module, 'exports', {
   value: exports,
   configurable: false,
   enumerable: true,

@@ -5,19 +5,20 @@ const {
   Put
 } = require('./scope');
 
+const JSON_stringify = JSON.stringify;
 const analyze = (scopes, {loc: keepLocations = true} = {}) => {
   const globalScope = scopes.scopes[0];
   const freeVars = globalScope.variables;
   const rawConstExprOf = (path) => {
     let value;
     if (path.type === 'StringLiteral') {
-      value = JSON.stringify(path.node.value);
+      value = JSON_stringify(path.node.value);
     } else if (path.type === 'TemplateLiteral') {
       if (path.get('expressions').node.length !== 0) {
         return null;
       }
       // assert quasis.length === 1 && quasis[len-1].tail === true
-      value = JSON.stringify(path.get('quasis').node[0].value.cooked);
+      value = JSON_stringify(path.get('quasis').node[0].value.cooked);
     } else if (path.type === 'BooleanLiteral') {
       value = path.node.value ? 'true' : 'false';
     } else if (path.type === 'NumericLiteral') {

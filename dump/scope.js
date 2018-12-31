@@ -1,16 +1,41 @@
 'use strict';
+/**
+ * Helpers for dealing with scopes.
+ */
+
+/**
+ * A generic helper for constructing
+ * @abstract
+ */
 class BindingOperation {
+  /**
+   * @constructor
+   * @abstract
+   * @param {string} name 
+   * @param {*} path 
+   */
   constructor(name, path) {
     this.name = name;
     this.path = path;
   }
 }
+/**
+ * @template K
+ */
 class Declare extends BindingOperation {
+  /**
+   * @param {K} kind
+   * @param {string} name
+   * @param {*} path
+   */
   constructor(kind, name, path) {
     super(name, path);
     this.kind = kind;
   }
 }
+/**
+ * @enum {string}
+ */
 const GET_PURPOSE = {
   __proto__: null,
   TypeOf: 'TypeOf',
@@ -21,6 +46,11 @@ const GET_PURPOSE = {
   JSXTag: 'JSXTag', // differentiated because of implicit tags like <div>
 };
 class Get extends BindingOperation {
+  /**
+   * @param {string} name 
+   * @param {*} path 
+   * @param {GET_PURPOSE} purpose 
+   */
   constructor(name, path, purpose) {
     super(name, path);
     if (!purpose) {
@@ -53,9 +83,8 @@ class Binding {
 // points to other module bindings
 class Import {
   /**
-   * 
-   * @param {*} specifier 
-   * @param {*} names 
+   * @param {string} specifier 
+   * @param {string[]} names 
    * @param {*} path 
    */
   constructor(specifier, names = [], path) {
@@ -84,6 +113,9 @@ class Scope {
     this.imports = [];
     this.catchImports = catchImports;
   }
+  /**
+   * removes cycles
+   */
   toJSON() {
     const ret = {
       ...this
@@ -156,6 +188,8 @@ class Scope {
  * 
  * Has convenience methods to defer actions that are expected to
  * only be resolved when done walking the entire AST
+ * 
+ * @template K binding kinds
  */
 class ScopeStack {
   constructor(topScope, modes, catchImports) {
@@ -178,6 +212,10 @@ class ScopeStack {
       this.scopes[this.scopes.length - 1] :
       null;
   }
+  /**
+   * @param {string} mode 
+   * @returns {boolean}
+   */
   hasMode(mode) {
     return this.current.hasMode(mode);
   }
@@ -191,7 +229,7 @@ class ScopeStack {
   }
   /**
    * Immediately declares a binding as the walk iterates the AST
-   * @param {Declare} decl 
+   * @param {Declare<K>} decl 
    */
   declare(decl) {
     this.current.encounter(decl);
@@ -222,10 +260,10 @@ class ScopeStack {
     this.pendingEncounters = null;
   }
 }
-module.exports = {
+module.exports = Object.freeze({
   Declare,
   Get,
   Put,
   Scope,
   ScopeStack
-};
+});
