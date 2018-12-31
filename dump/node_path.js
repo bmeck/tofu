@@ -16,6 +16,8 @@ class NodePath {
    * @param {NodePath<ASTNode> | null} parent backpath to the path that led to this 
    * @param {ASTNode} node value from the AST
    * @param {string} key backpath to verify which field of the parent was used to get this
+   * 
+   * @see NodePath.from
    */
   constructor(parent = null, node, key = null) {
     this.node = node;
