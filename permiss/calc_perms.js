@@ -2,6 +2,11 @@
 // generate a structure that aggregates all permissions with backrefs
 // /app/node_modules/foo using fs / globals
 // save to .tofu.json for speedy cache purposes
+//
+// usage: node calc_perms.js --dir $DIR
+//
+// if modified, please rerun using `--no-cache`
+// if wanting to avoid integrity folding, use `--no-integrity-folding`
 'use strict';
 const {spawn} = require('child_process');
 const PQueue = require('p-queue');
@@ -202,12 +207,11 @@ async function run() {
         const hasher = createHash('sha256');
         hasher.update(body);
         const integrity = `sha256-${hasher.digest('base64')}`;
-        if (integritiesFound.has(integrity)) {
+        if (!argv['no-integrity-folding'] && integritiesFound.has(integrity)) {
           integrityCollisions.set(path, integritiesFound.get(integrity));
           return;
         }
-        if (!argv.nocache) {
-          // console.log(integrity, integritiesFound)
+        if (!argv['no-cache']) {
           if (original.has(path)) {
             const old = original.get(path);
             integritiesFound.set(integrity, path);
@@ -260,8 +264,8 @@ async function run() {
     let pkg = path;
     while (pkg && !packagePaths.has(pkg)) {
       pkg = pkg.slice(0, Math.max(0, pkg.lastIndexOf(sep)));
-      // console.log(pkg)
     }
+    // TODO, summarize on a per package basis rather than per resource
     for (const dep of currentPerms.deps) {
       aggregate.deps.add(dep);
     }
@@ -269,7 +273,7 @@ async function run() {
     for (const binding of currentPerms.variables) {
       aggregate.globals.add(binding);
     }
-    if (!argv.nocache && original.has(path)) {
+    if (!argv['no-cache'] && original.has(path)) {
       const oldPerms = original.get(path);
       if (currentPerms.integrity === oldPerms.integrity) {
         // nothing updated
