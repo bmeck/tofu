@@ -13,8 +13,8 @@ class NodePath {
   /**
    * @constructor
    * @private
-   * @param {NodePath | null} parent 
-   * @param {ASTNode} node 
+   * @param {NodePath<ASTNode> | null} parent backpath to the path that led to this 
+   * @param {ASTNode} node value from the AST
    * @param {string} key backpath to verify which field of the parent was used to get this
    */
   constructor(parent = null, node, key = null) {
@@ -45,7 +45,7 @@ class NodePath {
    * Obtains a new NodePath by following the keys listed
    * Will never
    * @param  {...string} keys 
-   * @returns {NodePath}
+   * @returns {NodePath<ASTNode>}
    * 
    * @example
    * // will safely work even if there isn't a .expression.callee.type
@@ -54,17 +54,16 @@ class NodePath {
    * }
    */
   get(...keys) {
-    this.type
     let needle = this;
     // DO NOT OPTIMIZE THE ALLOCATIONS OUT
     // WE WANT A FULL PATH OF NodePaths
     // TO ALLOW RELIABLE .parent COUNT
     for (const key of keys) {
-      let node = null;
       if (typeof needle.node === 'object' && needle.node) {
-        node = needle.node[key];
+        needle = new NodePath(needle, needle.node[key], key);
+      } else {
+        needle = new NodePath(needle, null, key);
       }
-      needle = new NodePath(needle, node, key);
     }
     return needle;
   }
@@ -93,7 +92,7 @@ class NodePath {
   /**
    * Prefered way to construct a root NodePath
    * @param {ASTNode} node 
-   * @returns {NodePath}
+   * @returns {NodePath<ASTNode>}
    * 
    * @example
    * const root = NodePath.from(parse(sourceText));
