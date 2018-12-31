@@ -5,7 +5,7 @@ Arguments:
   file              file which to analyze, if missing uses STDIN
 Options:
   -h, --help        display this message
-  --fn              parse with function semantics
+  --fn              parse with function semantics, will treat "this" as non-global
   --raw             outputs raw full scope details without summarizing
   --source-type     parse with specified goal. "module" and "script" are allowed
   --use-strict      parse with strict mode

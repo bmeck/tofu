@@ -158,6 +158,7 @@ class Scope {
    * @param {BindingOperation} operation
    */
   encounter(operation) {
+    console.log(operation, this)
     const {variables} = this;
     const {name, kind} = operation;
     if (operation instanceof Declare) {

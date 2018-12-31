@@ -85,7 +85,7 @@ const walkExpression = (path, scopeStack, type = EXPRESSION_TYPE.Get) => {
   } else if (path.type === 'Super') {
     markExpression('super', path, scopeStack, type);
   } else if (path.type === 'ThisExpression') {
-    if (!scopeStack.current.hasMode('strict')) {
+    if (!scopeStack.current.hasMode('strict') && !scopeStack.current.hasMode('forcedFunction')) {
       // sloppy this accesses globals
       if (scopeStack.current.parent) {
         let needle = scopeStack.current;
@@ -232,8 +232,8 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), {
       if (forceFunction) {
         scopeStack.push(
           FunctionCatch,
-          mode
-        )
+          [...mode, 'forcedFunction']
+        );
       } else {
         scopeStack.push(
           sourceType === 'script' ?
@@ -245,7 +245,7 @@ const walk = (path, scopeStack = new ScopeStack(GlobalCatch, undefined, true), {
       if (nonFreeVariables) {
         const bindings = nonFreeVariables();
         for (const name of bindings) {
-          scopeStack.declare(new Declare(BINDING_KINDS.BLOCK, name, child));
+          scopeStack.declare(new Declare(BINDING_KINDS.BLOCK, name, 'NON_FREE'));
         }
       }
     } else if (child.type === 'ForOfStatement' ||
