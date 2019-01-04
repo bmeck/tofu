@@ -16,49 +16,27 @@ const { promisify } = require('util');
 const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
 const exists = promisify(fs.exists);
+const realpath = promisify(fs.realpath);
 const {createHash} = require('crypto')
+const {AuthorityUsage} = require('./authority');
 
-const {basename, dirname, extname, join, sep} = require('path');
+const {basename, dirname, extname, join, relative, sep} = require('path');
 
-const argv = require('minimist')(process.argv.slice(2));
+const argv = require('minimist')(process.argv.slice(2), {
+  boolean: ['cache', 'integrity-folding', ],
+  default: {
+    cache: true,
+    'integrity-folding': true,
+    'intrinsics': 'skip',
+  }
+});
 const dir = argv.dir || process.cwd();
 
 const INSTALL_SCRIPTS = new Set(['preinstall', 'install', 'postinstall']);
 const NODE_GYP_SKIPPED_IF_HAS_SCRIPTS = new Set(['preinstall', 'install']);
 const BUILTIN_MODULES = new Set(require('module').builtinModules);
 
-const PERMISSIONS = {
-  Shell: {
-    bindings: 'child_process'
-  },
-  ArbitrarySyscall: {
-    bindings: '*'
-  },
-};
-
-function after(runner) {
-  return new Promise((f, r) => {
-    let todo = 0;
-    for (const task of runner()) {
-      todo++;
-      ;(async () => {
-        try {
-          await task;
-          todo--;
-          if (todo === 0) {
-            f();
-          }
-        } catch (e) {
-          r(e);
-        }
-      })();
-    }
-    if (todo === 0) {
-      f();
-    }
-  });
-}
-
+const OK_GETS = new Set(['TypeOf', 'Identity']);
 async function run() {
   let original;
   try {
@@ -70,7 +48,9 @@ async function run() {
   const files = await rrdir(dir, {
     strict: true,
   });
-  const paths = files.filter(f => !f.directory).map(f => f.path);
+  const integritiesFound = new Map();
+  const integrityCollisions = new Map();
+  const paths = files.filter(f => !f.directory);
   async function processPackageJSON(src, sourceFilename) {
     let willUseNodeGypByDefault = true;
     // righteous anger if it isn't JSON
@@ -176,7 +156,18 @@ async function run() {
           f({
             deps: [...deps],
             syscalls: false,
-            variables: Object.keys(output.freeVariables),
+            variables: Object.keys(output.freeVariables).reduce(
+              (acc, k) => {
+                if (output.freeVariables[k].puts.length !== 0) return acc;
+                // if everything is just simple id/typeof, skip free variable
+                if (output.freeVariables[k].gets.every(g => OK_GETS.has(g.purpose))) {
+                  return acc;
+                }
+                acc.push(k);
+                return acc;
+              },
+              []
+            ),
             mime: 'application/node'
           });
         }
@@ -197,110 +188,144 @@ async function run() {
     totality.set(path, {...totality.get(path), ...fields});
   }
   const packagePaths = new Set();
-  const integritiesFound = new Map();
-  const integrityCollisions = new Map();
-  await after(function* () {
-    for (const path of paths) {
-      yield (async () => {
-        const filename = basename(path);
-        const body = await readFile(path);
-        const hasher = createHash('sha256');
-        hasher.update(body);
-        const integrity = `sha256-${hasher.digest('base64')}`;
-        if (!argv['no-integrity-folding'] && integritiesFound.has(integrity)) {
-          integrityCollisions.set(path, integritiesFound.get(integrity));
-          return;
-        }
-        if (!argv['no-cache']) {
-          if (original.has(path)) {
-            const old = original.get(path);
-            integritiesFound.set(integrity, path);
-            if (old.integrity === integrity) {
-              updateTotality(path, old);
-              return;
-            }
+  const tasks = new PQueue();
+  const symlinks = new Map();
+  for (const {path, symlink} of paths) {
+    tasks.add(async () => {
+      if (symlink) {
+        const real = relative(dir, await realpath(path)).replace(/^\.\//, '');
+        symlinks.set(path, real);
+        return;
+      }
+      const filename = basename(path);
+      const body = await readFile(path);
+      const hasher = createHash('sha256');
+      hasher.update(body);
+      if (filename === 'package.json') {
+        packagePaths.add(dirname(path));
+      }
+      const integrity = `sha256-${hasher.digest('base64')}`;
+      if (!!argv['integrity-folding'] && integritiesFound.has(integrity)) {
+        integrityCollisions.set(path, integritiesFound.get(integrity));
+        return;
+      }
+      if (!!argv['cache']) {
+        if (original.has(path)) {
+          const old = original.get(path);
+          integritiesFound.set(integrity, path);
+          if (old.integrity === integrity) {
+            updateTotality(path, old);
+            return;
           }
         }
-        integritiesFound.set(integrity, path);
+      }
+      integritiesFound.set(integrity, path);
+      updateTotality(path, {
+        integrity
+      });
+      if (filename === 'package.json') {
+        updateTotality(path, await processPackageJSON(body, path));
+        return;
+      } 
+      const extension = extname(filename);
+      if (extension === '.node') {
         updateTotality(path, {
-          integrity
+          deps: [],
+          syscalls: true,
+          variables: [],
+          mime: 'application/vnd.nodejs.node'
         });
-        if (filename === 'package.json') {
-          packagePaths.add(dirname(path));
-          updateTotality(path, await processPackageJSON(body, path));
-          return;
-        } 
-        const extension = extname(filename);
-        if (extension === '.node') {
-          updateTotality(path, {
-            deps: [],
-            syscalls: true,
-            variables: [],
-            mime: 'application/vnd.nodejs.node'
-          });
-        } else if (extension === '.json') {
-          updateTotality(path, {
-            deps: [],
-            syscalls: false,
-            variables: [],
-            mime: 'application/json'
-          });
-        } else {
-          updateTotality(path, await processSourceText(body, path));
-        }
-      })();
-    }
-  });
+      } else if (extension === '.json') {
+        updateTotality(path, {
+          deps: [],
+          syscalls: false,
+          variables: [],
+          mime: 'application/json'
+        });
+      } else {
+        updateTotality(path, await processSourceText(body, path));
+      }
+    });
+  }
+  await tasks.onIdle();
   integritiesFound.clear();
-  const aggregate = {
-    deps: new Set(),
-    syscalls: false,
-    globals: new Set()
-  };
   for (const [collision, analyzedPath] of integrityCollisions.entries()) {
     totality.set(collision, totality.get(analyzedPath));
   }
-  for (const [path, currentPerms] of totality.entries()) {
+  for (const [link, real] of symlinks.entries()) {
+    totality.set(link, totality.get(real));
+  }
+  const packageAggregates = new Map();
+  for (let [path, currentPerms] of totality.entries()) {
+    if (symlinks.has(path)) {
+      path = symlinks.get(path);
+    }
     let pkg = path;
     while (pkg && !packagePaths.has(pkg)) {
       pkg = pkg.slice(0, Math.max(0, pkg.lastIndexOf(sep)));
     }
-    // TODO, summarize on a per package basis rather than per resource
-    for (const dep of currentPerms.deps) {
-      aggregate.deps.add(dep);
+    if (!packageAggregates.has(pkg)) {
+      packageAggregates.set(pkg, new AuthorityUsage());
     }
-    aggregate.syscalls = aggregate.syscalls || currentPerms.syscalls;
-    for (const binding of currentPerms.variables) {
-      aggregate.globals.add(binding);
-    }
-    if (!argv['no-cache'] && original.has(path)) {
-      const oldPerms = original.get(path);
-      if (currentPerms.integrity === oldPerms.integrity) {
-        // nothing updated
-        continue;
-      }
-      if (
-        currentPerms.syscalls !== oldPerms.syscalls ||
-        !currentPerms.deps.every(d => oldPerms.deps.includes(d))
-      ) {
-        // console.log('AUTHORITY USAGE ADDED FOR EXISTING RESOURCE:', path);
-        // console.log('old deps:', oldPerms.deps.filter(d => currentPerms.deps.includes(d)));
-        // console.log('new deps:', currentPerms.deps.filter(d => oldPerms.deps.includes(d) === false));
-        // console.log('removed deps: ', oldPerms.deps.filter(d => currentPerms.deps.includes(d) === false));
-        // console.log('uses arbitrary syscalls:', currentPerms.syscalls);
-        // console.log('global variables:', currentPerms.variables);
-        // console.log('----');
-      }
-      continue;
-    }
+    packageAggregates.get(pkg).merge(currentPerms);
+    // // TODO, summarize on a per package basis rather than per resource
+    // for (const dep of currentPerms.deps) {
+    //   aggregate.deps.add(dep);
+    // }
+    // aggregate.syscalls = aggregate.syscalls || currentPerms.syscalls;
+    // for (const binding of currentPerms.variables) {
+    //   aggregate.globals.add(binding);
+    // }
+    // if (!argv['no-cache'] && original.has(path)) {
+    //   const oldPerms = original.get(path);
+    //   if (currentPerms.integrity === oldPerms.integrity) {
+    //     // nothing updated
+    //     continue;
+    //   }
+    //   if (
+    //     currentPerms.syscalls !== oldPerms.syscalls ||
+    //     !currentPerms.deps.every(d => oldPerms.deps.includes(d))
+    //   ) {
+    //     // console.log('AUTHORITY USAGE ADDED FOR EXISTING RESOURCE:', path);
+    //     // console.log('old deps:', oldPerms.deps.filter(d => currentPerms.deps.includes(d)));
+    //     // console.log('new deps:', currentPerms.deps.filter(d => oldPerms.deps.includes(d) === false));
+    //     // console.log('removed deps: ', oldPerms.deps.filter(d => currentPerms.deps.includes(d) === false));
+    //     // console.log('uses arbitrary syscalls:', currentPerms.syscalls);
+    //     // console.log('global variables:', currentPerms.variables);
+    //     // console.log('----');
+    //   }
+    //   continue;
+    // }
     // console.log('AUTHORITY USAGE FOR NEW RESOURCE:', path);
     // console.log('new deps:', currentPerms.deps);
     // console.log('uses arbitrary syscalls:', currentPerms.syscalls);
     // console.log('global variables:', currentPerms.variables);
     // console.log('----');
   }
-  console.dir(aggregate)
-  console.log('Finished aggregating authority for', totality.size, 'resources');
+  const summary = {
+    deps: new Map(),
+    syscalls: [],
+    variables: new Map(),
+  };
+  const intrinsicVariables = new Set(require('vm').runInNewContext('Object.keys(Object.getOwnPropertyDescriptors(this))'))
+  for (const [pkgName, usage] of packageAggregates.entries()) {
+    if (usage.syscalls) {
+      summary.syscalls.push(pkgName);
+    }
+    for (const dep of usage.deps) {
+      if (!summary.deps.has(dep)) summary.deps.set(dep, []);
+      summary.deps.get(dep).push(pkgName);
+    }
+    for (const variable of usage.variables) {
+      if (argv['intrinsics'] === 'skip' && intrinsicVariables.has(variable)) {
+        continue;
+      }
+      if (!summary.variables.has(variable)) summary.variables.set(variable, []);
+      summary.variables.get(variable).push(pkgName);
+    }
+  }
+  console.dir(summary, {colors: true, depth: null});
+  // console.log('Finished aggregating authority for', totality.size, 'resources');
   const newTOFU = [
     ...totality.entries()
   ].reduce((acc, [k,v]) => {acc[k] = v; return acc;}, {});

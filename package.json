@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "@babel/parser": "7.2.0",
+    "chalk": "2.4.1",
     "isexe": "*",
     "minimist": "1.2.0",
     "p-queue": "3.0.0",

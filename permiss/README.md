@@ -2,6 +2,43 @@
 
 This tool allows creation of manifests.
 
+## What does it audit?
+
+It finds what authorities are *referenced* from code.
+
+### What caveats are there?
+
+Due to the ability to use side channels through globals or shared prototypes some assumptions must be made:
+
+1. Function constructors are not available via literals and prototype crawling once your application starts up; otherwise, complex ways of getting the constructor can lead to arbitrary code evaluation:
+
+```mjs
+;(async function () {}).constructor('await import("fs")');
+```
+
+This can be prevented with the following for example:
+
+```mjs
+;[
+  function(){},
+  function*(){},
+  async function(){},
+  async function*() {},
+].forEach(
+  fnOfAType => Object.getPrototypeOf(fnOfAType).constructor = null;
+);
+```
+
+2. Globals are not mutated in unexpected ways.
+
+If globals are mutated, they can leak authority in non-trivial ways:
+
+```mjs
+global.fs = require('fs');
+```
+
+This can be prevented by freezing globals.
+
 ## How Does It Work
 
 It analyzes files according to formats in the following ways:
