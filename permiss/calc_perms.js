@@ -36,7 +36,7 @@ const INSTALL_SCRIPTS = new Set(['preinstall', 'install', 'postinstall']);
 const NODE_GYP_SKIPPED_IF_HAS_SCRIPTS = new Set(['preinstall', 'install']);
 const BUILTIN_MODULES = new Set(require('module').builtinModules);
 
-const OK_GETS = new Set(['TypeOf', 'Identity']);
+const OK_GETS = new Set(['TypeOf', 'Identity', 'Simple']);
 async function run() {
   let original;
   try {

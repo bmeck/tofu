@@ -5,6 +5,7 @@ const { from: Array_from, isArray } = Array;
  * Simple class to be able to generate a path from root to a specific node.
  * Used to ease cases of complex inspection by having default operations that
  * allow safe inspection of ASTs that avoid throwing errors.
+ * 
  * @template {*} ASTNode - a value that can be reached in the AST
  * 
  * @see NodePath.from
@@ -56,6 +57,9 @@ class NodePath {
    * }
    */
   get(...keys) {
+    /**
+     * @type {NodePath<ASTNode>}
+     */
     let needle = this;
     // DO NOT OPTIMIZE THE ALLOCATIONS OUT
     // WE WANT A FULL PATH OF NodePaths
@@ -93,8 +97,9 @@ class NodePath {
   }
   /**
    * Prefered way to construct a root NodePath
-   * @param {ASTNode} node 
-   * @returns {NodePath<ASTNode>}
+   * @template T
+   * @param {T} node 
+   * @returns {NodePath<T>}
    * 
    * @example
    * const root = NodePath.from(parse(sourceText));

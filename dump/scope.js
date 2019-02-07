@@ -42,7 +42,8 @@ const GET_PURPOSE = {
   Call: 'Call',
   ComplexReified: 'ComplexReified',
   Construct: 'Construct',
-  Identity: 'Identity',
+  Simple: 'Simple', // raw w/o other operations, could fire global getters
+  Identity: 'Identity', // used only in strict non-hookable comparison
   JSXTag: 'JSXTag', // differentiated because of implicit tags like <div>
 };
 class Get extends BindingOperation {
@@ -53,7 +54,20 @@ class Get extends BindingOperation {
    */
   constructor(name, path, purpose) {
     super(name, path);
+    detect_purpose:
     if (!purpose) {
+      if (path.type === 'Identifier' || path.type === 'ThisExpression') {
+        let isSimple = false;
+        if (path.parent.type !== 'MemberExpression') {
+          isSimple = true;
+        } else if (path.node.key === 'property' && path.parent.node.computed) {
+          isSimple = true;
+        }
+        if (isSimple) {
+          purpose = GET_PURPOSE.Simple;
+          break detect_purpose;
+        }
+      }
       if (path.parent.type === 'CallExpression' && path.key === 'callee') {
         purpose = GET_PURPOSE.Call;
       } else if (path.parent.type === 'NewExpression' && path.key === 'callee') {
