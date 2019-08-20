@@ -1,5 +1,5 @@
 {
-  "name": "tofu",
+  "name": "@bradleymeck/tofu",
   "version": "1.0.0",
   "description": "",
   "main": "dump.js",

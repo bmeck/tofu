@@ -209,7 +209,7 @@ class PendingIdentifier {
 /**
  * Represents a Reference used for Delete/Get/Initialize/Put.
  */
-class PendingReference {
+class PendingIdentifierReference {
   constructor(name) {
     this.name = name;
   }
@@ -220,18 +220,16 @@ class Reference {
     this.base = base;
     this.strict = strict;
   }
-  static fromScope(pendingReference, scope) {
-    return new Reference(pendingReference.name, scope, pendingReference.strict);
-  }
 }
 /**
  * Represents a binding that can be referenced prior to knowing
  * the scope which contains the binding.
  */
 class PendingBinding {
-  constructor(name, kind) {
+  constructor(name, kind, tdz) {
     this.name = name;
     this.kind = kind;
+    this.tdz = tdz;
   }
 }
 class Binding {
@@ -273,11 +271,13 @@ class PendingScope {
    * @param {{children?: PendingScope[], bindings?: {[name: string]: Binding}, dynamic?: boolean, strict?: boolean}} children
    */
   constructor({
+    instructions = [],
     children = [],
     bindings = {__proto__: null},
     dynamic = false,
     strict = false,
   } = {}) {
+    this.instructions = instructions;
     this.children = children;
     this.bindings = bindings;
     this.dynamic = dynamic;
@@ -324,11 +324,9 @@ class Scope {
  */
 class Operations {
   constructor({
-    declarations = [],
     instructions = [],
     scopes = [],
   } = {}) {
-    this.declarations = declarations;
     this.instructions = instructions;
     this.scopes = scopes;
   }
@@ -337,20 +335,35 @@ class Operations {
    * @template DrainBindingKind
    * @param {Set<DrainBindingKind>} kinds
    */
-  closeScope(kinds, dynamic) {
+  closeScope(kinds, dynamic = false) {
     const remaining = [];
+    const unusedBindings = [];
     const bindings = {__proto__: null};
-    for (const binding of this.declarations) {
-      if (kinds.has(binding.kind)) {
-        bindings[binding.name] = new Binding();
+    for (const instruction of this.instructions) {
+      if (instruction instanceof PendingBinding) {
+        if (kinds.has(instruction.kind)) {
+          const initializeBinding = [
+            new PendingIdentifierReference(instruction.name),
+            WellKnownValue.Undefined(),
+            new Operation.Algorithm('PutValue', 2)
+          ];
+          if (!instruction.tdz) {
+            remaining.unshift(...initializeBinding);
+          } else {
+            remaining.push(...initializeBinding);
+          }
+          bindings[instruction.name] = new Binding();
+        } else {
+          unusedBindings.push(instruction);
+        }
       } else {
-        remaining.push(binding);
+        remaining.push(instruction);
       }
     }
     return new Operations({
-      declarations: remaining,
-      instructions: this.instructions,
+      instructions: unusedBindings,
       scopes: [new PendingScope({
+        instructions: remaining,
         children: this.scopes,
         bindings,
         dynamic,
@@ -361,18 +374,58 @@ class Operations {
   /**
    * Takes pending identifiers and turns them into pending bindings
    */
-  closePattern(kind) {
-    const declarations = this.declarations;
+  closeDeclaration(kind, tdz = false) {
     const remaining = [];
     for (const instruction of this.instructions) {
       if (instruction instanceof PendingIdentifier) {
-        declarations.push(new PendingBinding(instruction.name, kind));
+        remaining.push(new PendingBinding(instruction.name, kind, tdz));
       } else {
         remaining.push(instruction);
       }
     }
     return new Operations({
-      declarations,
+      instructions: remaining,
+      scopes: this.scopes,
+    });
+  }
+  /**
+   * Takes pending identifiers and turns them into pending bindings
+   * @param {Operations} initializer
+   */
+  closeAssignment(initializer) {
+    const remaining = [];
+    const innerScopes = initializer ? initializer.scopes : [];
+    for (const instruction of this.instructions) {
+      if (instruction instanceof PendingIdentifier) {
+        if (initializer) {
+          remaining.push(
+            new PendingIdentifierReference(instruction.name),
+            ...initializer.instructions,
+            new Operation.Algorithm('PutValue', 2),
+          );
+        }
+      } else {
+        remaining.push(instruction);
+      }
+    }
+    return new Operations({
+      instructions: remaining,
+      scopes: [this.scopes, ...innerScopes],
+    });
+  }
+  /**
+   * Takes pending identifiers and turns them into pending bindings
+   */
+  closeName() {
+    const remaining = [];
+    for (const instruction of this.instructions) {
+      if (instruction instanceof PendingIdentifier) {
+        remaining.push(WellKnownValue.StringLiteral(instruction.name));
+      } else {
+        remaining.push(instruction);
+      }
+    }
+    return new Operations({
       instructions: remaining,
       scopes: this.scopes,
     });
@@ -382,38 +435,22 @@ class Operations {
    * Takes pending identifiers and turns them into pending references
    */
   closeExpression() {
-    const declarations = this.declarations;
     const remaining = [];
     for (const instruction of this.instructions) {
       if (instruction instanceof PendingIdentifier) {
-        declarations.push(new PendingReference(instruction.name));
+        remaining.push(new PendingIdentifierReference(instruction.name));
       } else {
         remaining.push(instruction);
       }
     }
     return new Operations({
-      declarations,
       instructions: remaining,
-      scopes: this.scopes,
-    });
-  }
-
-  /**
-   * Used for manual pushing of bindings for implicit bindings like
-   * `this`, `super`, `arguments`, etc.
-   * @param  {...any} declarations 
-   */
-  pushDeclarations(...declarations) {
-    return new Operations({
-      declarations: [...this.declarations, ...declarations],
-      instructions: this.instructions,
       scopes: this.scopes,
     });
   }
 
   pushInstructions(...instructions) {
     return new Operations({
-      declarations: this.declarations,
       instructions: [...this.instructions, ...instructions],
       scopes: this.scopes,
     });
@@ -432,8 +469,6 @@ class Operations {
   static concat(...aggregates) {
     return new Operations({
       // @ts-ignore
-      declarations: aggregates.flatMap(a => a.declarations),
-      // @ts-ignore
       instructions: aggregates.flatMap(a => a.instructions),
       // @ts-ignore
       scopes: aggregates.flatMap(a => a.scopes),
@@ -448,7 +483,7 @@ module.exports = {
   Operations,
   PendingBinding,
   PendingIdentifier,
-  PendingReference,
+  PendingIdentifierReference,
   PendingScope,
   Reference,
   WellKnownValue,

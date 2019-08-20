@@ -5,11 +5,10 @@ const {
 const {
   Operations,
   PendingIdentifier,
-  PendingBinding,
-  PendingReference,
   Operation,
   WellKnownValue,
 } = require('./new_scope');
+const LEXICAL_SCOPE_KINDS = new Set(['let', 'const']);
 const GLOBAL_LEXICAL_SCOPE_KINDS = new Set(['let', 'const']);
 const GLOBAL_SCOPE_KINDS = new Set(['var', 'let', 'const']);
 const NodePath = require('./node_path').NodePath;
@@ -107,92 +106,90 @@ const postOrderWalk = (path, op) => {
 const foldOperations = (path, operations) => {
   const type = path.type;
   if (type === 'CommentLine' || type === 'CommentBlock') {
-    return new Operations({});
+    return new Operations();
   } else if (type === 'Identifier') {
     return new Operations({
       instructions: [new PendingIdentifier(path.node.name)]
     });
   } else if (type === 'BooleanLiteral') {
     return new Operations({
-      expressions: [WellKnownValue.BooleanLiteral(path.node.value)]
+      instructions: [WellKnownValue.BooleanLiteral(path.node.value)]
     });
   } else if (type === 'NumericLiteral') {
     return new Operations({
-      expressions: [WellKnownValue.NumericLiteral(path.node.extra.raw)]
+      instructions: [WellKnownValue.NumericLiteral(path.node.extra.raw)]
     });
   } else if (type === 'NullLiteral') {
     return new Operations({
-      expressions: [WellKnownValue.NullLiteral()]
+      instructions: [WellKnownValue.NullLiteral()]
     });
   } else if (type === 'StringLiteral') {
     return new Operations({
-      expressions: [WellKnownValue.StringLiteral(path.node.value)]
+      instructions: [WellKnownValue.StringLiteral(path.node.value)]
     });
   } else if (type === 'ExpressionStatement') {
-    return foldExpression(operations.expression);
-  } else if (type === 'IfStatement') {
-    return Operations.from(
-      operations.test,
-      operations.consequent,
-      ...[path.node.alternate ? [operations.alternate] : []]
+    return operations.expression.closeExpression();
+  } else if (type === 'AssignmentExpression') {
+    return Operations.concat(
+      operations.left.closeAssignment(operations.right),
     );
-  } else if (type === 'BlockStatement') {
-    return Operations.from(...operations.body);
+  } else if (type === 'BinaryExpression') {
+    return Operations.concat(operations.left, operations.right, new Operations({
+      instructions: [new Operation.Algorithm(path.node.operator, 2)]
+    }));
+  } else if (type === 'ArrayPattern') {
+    return Operations.concat(...operations.elements);
+  } else if (type === 'AssignmentPattern') {
+    return Operations.concat(
+      operations.left,
+      operations.right.closeExpression()
+    );
   } else if (type === 'VariableDeclarator') {
-    return Operations.from(operations.id, foldExpression(operations.init));
-  } else if (type === 'VariableDeclaration') {
-    return foldPattern(Operations.from(...operations.declarations), path.node.kind);
-  } else if (type === 'FunctionDeclaration') {
-    const ret = Operations.from(
-      foldPattern(Operations.from(...operations.params), 'var'),
-      operations.body,
-      new Operations({
-        expressions: [
-          new PendingBinding(path.node.id.name, 'var')
-        ]
-      })
+    const ret = Operations.concat(
+      operations.id,
+      ...(
+        operations.init ? [
+          operations.id.closeAssignment(operations.init.closeExpression()),
+        ] : []
+      ),
     );
     return ret;
-  } else if (type === 'ArrayPattern') {
-    return Operations.from(...operations.elements);
-  } else if (type === 'AssignmentPattern') {
-    return Operations.from(operations.left, foldExpression(operations.right));
-  } else if (type === 'RestElement') {
-    return operations.argument;
-  } else if (type === 'SequenceExpression') {
-    return Operations.from(...operations.expressions);
-  } else if (type === 'AssignmentExpression') {
-    console.log(operations)
-    if (operations.left.instructions.length === 1 && operations.left.instructions[0] instanceof PendingIdentifier) {
-      return Operations.from(
-        operations.right, foldAssignment(operations.left)
-      );
-    }
-    return Operations.from(operations.left, operations.right);
-  }  else if (type === 'BinaryExpression') {
-    return Operations.from(operations.left, operations.right);
+  } else if (type === 'VariableDeclaration') {
+    return Operations.concat(...operations.declarations).closeDeclaration(path.node.kind);
   } else if (type === 'LogicalExpression') {
-    return Operations.from(operations.left, operations.right);
+    return Operations.concat(operations.left, operations.right);
   } else if (type === 'UnaryExpression') {
-    return Operations.from(operations.argument);
+    return Operations.concat(operations.argument, new Operations({
+      instructions: [new Operation.Algorithm(path.node.operator, 1)]
+    }));
   } else if (type === 'MemberExpression') {
     let propOps;
     if (path.node.computed) {
-      propOps = foldExpression(operations.property);
+      propOps = operations.property.closeExpression();
     } else {
-      propOps = foldProperty(operations.property);
+      propOps = operations.property.closeName();
     }
-    return Operations.from(propOps, operations.object);
+    return Operations.concat(operations.object, propOps, new Operations({
+      instructions: [new Operation.Algorithm('CreateReference', 2)]
+    }));
+  } else if (type === 'BlockStatement') {
+    const ops = Operations.concat(...operations.body);
+    // if (path.node.sourceType === 'module') {
+    //   ops.currentScope().create('this');
+    //   ops.currentScope().create('import.meta');
+    //   ops.closeScope(MODULE_SCOPE_KINDS);
+    // }
+    return ops.closeScope(LEXICAL_SCOPE_KINDS)
   } else if (type === 'Program') {
     const ops = Operations.concat(...operations.body);
-    if (path.node.sourceType === 'module') {
-      ops.currentScope().create('this');
-      ops.currentScope().create('import.meta');
-      ops.closeScope(MODULE_SCOPE_KINDS);
-    }
-    ops.closeScope(GLOBAL_LEXICAL_SCOPE_KINDS);
-    ops.closeScope(GLOBAL_SCOPE_KINDS);
-    return ops;
+    // if (path.node.sourceType === 'module') {
+    //   ops.currentScope().create('this');
+    //   ops.currentScope().create('import.meta');
+    //   ops.closeScope(MODULE_SCOPE_KINDS);
+    // }
+    return ops
+      .closeScope(GLOBAL_LEXICAL_SCOPE_KINDS)
+      .closeScope(GLOBAL_SCOPE_KINDS).scopes[0];
   } else if (type === 'File') {
     return operations.program;
   } else {
@@ -200,58 +197,12 @@ const foldOperations = (path, operations) => {
     throw TypeError(`unknown .type ${type}`);
   }
 };
-const inPlaceMap = (arr, fn) => {
-  for (let i = 0; i < arr.length; i++) {
-    arr[i] = fn(arr[i], i, arr);
-  }
-}
-/**
- * 
- * @param {Operations} operations 
- * @returns {Operations}
- */
-const foldExpression = (operations) => {
-  inPlaceMap(operations.expressions, (expr) => {
-    if (expr instanceof PendingIdentifier) {
-      return new Get(expr.name);
-    }
-    return expr;
-  });
-  return operations;
-};
-const foldPattern = (operations, kind) => {
-  inPlaceMap(operations.expressions, (expr) => {
-    if (expr instanceof PendingIdentifier) {
-      return new PendingBinding(expr.name, kind);
-    }
-    return expr;
-  });
-  return operations;
-};
-const foldAssignment = (operations) => {
-  inPlaceMap(operations.expressions, (expr) => {
-    if (expr instanceof PendingIdentifier) {
-      return new Put(expr.name);
-    }
-    return expr;
-  });
-  return operations;
-};
-const foldProperty = (operations) => {
-  inPlaceMap(operations.expressions, (expr) => {
-    if (expr instanceof PendingIdentifier) {
-      return WellKnownValue.StringLiteral(expr.name);
-    }
-    return expr;
-  });
-  return operations;
-};
 
 const ret = walk(
   require('./node_path').NodePath.from(
     require('@babel/parser').parse(
     `
-    x=null
+      let e=1;
     `
     )
   )
