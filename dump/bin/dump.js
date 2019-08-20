@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 'use strict';
 const USAGE = `
 Usage: node dump.js <file>
