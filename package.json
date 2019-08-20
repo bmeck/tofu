@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "dump.js",
+  "private": false,
   "bin": {
     "tofu-dump": "dump/bin/dump.js"
   },
