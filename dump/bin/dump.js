@@ -22,34 +22,19 @@ if (argv.h || argv.help) {
   process.exit(0);
 }
 
-/**
- * @typedef {import('babel-types').Node} ASTNode
- */
-const {parse} = require('@babel/parser');
-const walk = require('../walk');
-const {NodePath} = require('../node_path');
-const analyze = require('../analyze');
+const fs = require('fs');
 
 // see https://babeljs.io/docs/en/babel-parser#options
 const parseOptions = process.env.PARSE_OPTIONS ?
   JSON.parse(process.env.PARSE_OPTIONS) :
   {};
 
-// read in and buffer the source text before parsing
-const body = [];
-const input = argv._.length ?
-  require('fs').createReadStream(argv._[0]) :
-  process.stdin;
-input.on('data', (data) => body.push(data));
-input.on('end', () => {
-  check(Buffer.concat(body).toString('utf8'));
-});
-const useStrict = argv['use-strict'];
-if (useStrict) {
+const forceStrict = argv['use-strict'];
+if (forceStrict) {
   parseOptions.strictMode = true;
 }
-const useFunction = argv.fn;
-if (useFunction) {
+const forceFunction = argv.fn;
+if (forceFunction) {
   parseOptions.allowReturnOutsideFunction = true;
 }
 const sourceType = argv['source-type'];
@@ -59,24 +44,26 @@ if (typeof sourceType !== 'undefined') {
   }
   parseOptions.sourceType = argv['source-type'];
 }
-const check = (body) => {
-  /**
-   * @type {NodePath<ASTNode>}
-   */
-  const root = NodePath.from(parse(body, parseOptions));
-  const scopes = walk(root, undefined, {
-    forceFunction: useFunction,
-    nonFreeVariables: () => [].concat(argv.var || []),
-    forceStrict: useStrict
+
+// read in and buffer the source text before parsing
+const input = argv._.length ?
+  fs.openSync(argv._[0]) :
+  process.stdin.fd;
+fs.readFile(input, 'utf8', (err, body) => {
+  if (err) throw err;
+
+  const nonFreeVariables = () => [].concat(argv.var || []);
+  const result = require('../index.js')(body, {
+    parseOptions,
+    forceFunction,
+    forceStrict,
+    nonFreeVariables
   });
-  scopes.resolveOperations();
-
   if (argv.r || argv.raw) {
-    console.log(JSON.stringify(scopes, null, 2));
-    process.exit(0);
+    console.log(JSON.stringify(result.raw(), null, 2));
+    return;
   }
-
-  console.log(JSON.stringify(analyze(scopes, {
+  console.log(JSON.stringify(result.analyzed({
     loc: !(argv['no-locations'])
-  })));
-}
+  }), null, 2));
+});
