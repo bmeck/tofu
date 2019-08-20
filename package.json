@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "dump.js",
+  "bin": {
+    "tofu-dump": "dump/bin/dump.js"
+  },
   "scripts": {
     "test": "jest"
   },
