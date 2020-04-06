@@ -17,7 +17,7 @@
     "@babel/parser": "7.5.5",
     "chalk": "2.4.2",
     "isexe": "*",
-    "minimist": "1.2.0",
+    "minimist": "1.2.3",
     "p-queue": "6.1.1",
     "rimraf": "3.0.0",
     "rrdir": "3.1.1"
